@@ -1,0 +1,216 @@
+@import "tailwindcss";
+
+/* QuizoTab's studio palette: a flat graphite set like a live sports broadcast, with one electric
+   blue marking what is live and amber for whoever leads. Each colour becomes a Tailwind class:
+   bg-studio, text-muted, border-line, bg-live, text-amber, ... */
+@theme {
+  --color-studio: #15171c;
+  --color-studio-deep: #0f1115;
+  --color-panel: #1e2128;
+  --color-panel-2: #262a33;
+  --color-live: #2f6bff;
+  --color-live-deep: #1e4ed8;
+  --color-amber: #ffb300;
+  --color-text: #f5f6f8;
+  --color-muted: #9aa1ae;
+  --color-line: rgba(245, 246, 248, 0.12);
+  --color-good: #2ee6a6;
+  --color-bad: #ff3b5c;
+
+  /* Names from the old night palette, kept so pages not restyled yet still match the new set */
+  --color-night: #15171c;
+  --color-night-deep: #0f1115;
+  --color-violet: #262a33;
+  --color-magenta: #2f6bff;
+  --color-cyan: #2f6bff;
+  --color-gold: #ffb300;
+  --color-purple: #5b7bff;
+  --color-coral: #ff6b6b;
+  --color-bronze: #d9a066;
+  --color-silver: #3a3f4b;
+
+  /* A flat blue ring instead of the old glow */
+  --shadow-neon: 0 0 0 3px rgba(47, 107, 255, 0.3);
+  --shadow-neon-strong: 0 0 0 4px rgba(47, 107, 255, 0.45);
+
+  --container-page: 1100px;
+}
+
+/* One family does everything: Archivo at normal width for text, stretched wide for headlines.
+   The variable is set on <html> by next/font in app/layout.tsx */
+@theme inline {
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+/* The wide cut of Archivo, for headlines and the numbers that should read from across a hall */
+@utility wide {
+  font-stretch: 125%;
+}
+
+:root {
+  color-scheme: dark;
+  /* Page gutter: content lines up with a 1100px column on wide screens */
+  --edge: max(24px, calc((100% - 1100px) / 2 + 24px));
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-studio);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-stretch: 125%;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-live);
+  outline-offset: 2px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #6f7684;
+}
+
+/* A panel that was just switched to fades up into place */
+@keyframes panel-in {
+  from {
+    opacity: 0.2;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Policy pages (terms, refund, privacy): plain long-form text, styled once here
+   instead of with classes on every paragraph. Was legal.css. */
+@layer components {
+  .legal-doc h2 {
+    margin-top: 44px;
+    margin-bottom: 12px;
+    font-weight: 600;
+    font-size: 23px;
+    line-height: 1.25;
+    color: #fff;
+    scroll-margin-top: 24px;
+  }
+
+  .legal-doc h3 {
+    margin-top: 22px;
+    margin-bottom: 8px;
+    font-family: var(--font-sans);
+    font-stretch: 100%;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .legal-doc p,
+  .legal-doc li {
+    color: #d5d9e0;
+    font-size: 15.5px;
+    line-height: 1.75;
+  }
+
+  .legal-doc p + p {
+    margin-top: 12px;
+  }
+
+  .legal-doc ul,
+  .legal-doc ol {
+    margin: 10px 0 12px;
+    padding-left: 22px;
+  }
+
+  .legal-doc ul {
+    list-style: disc;
+  }
+
+  .legal-doc ol {
+    list-style: decimal;
+  }
+
+  .legal-doc li + li {
+    margin-top: 6px;
+  }
+
+  .legal-doc strong {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  .legal-doc a {
+    color: var(--color-live);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  /* Prices and timings that people look for */
+  .legal-table {
+    width: 100%;
+    margin: 14px 0 6px;
+    border-collapse: collapse;
+    font-size: 15px;
+  }
+
+  .legal-table th,
+  .legal-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--color-line);
+    text-align: left;
+    vertical-align: top;
+    line-height: 1.5;
+  }
+
+  .legal-table th {
+    color: var(--color-muted);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .legal-table td:last-child {
+    color: var(--color-amber);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .legal-doc .legal-contact {
+    list-style: none;
+    padding: 16px 20px;
+    border: 1px solid var(--color-line);
+  }
+}
+
+/* Confetti over the podium at the end of a live quiz */
+@keyframes confetti {
+  from {
+    transform: translateY(0) rotate(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(110vh) rotate(720deg);
+    opacity: 0.8;
+  }
+}
