@@ -4,6 +4,7 @@ import { HeroCarousel, type HeroSlide } from "@/components/site/hero-carousel";
 import { SampleBoard } from "@/components/site/sample-board";
 import { SiteFooter } from "@/components/site/site-footer";
 import { SiteHeader } from "@/components/site/site-header";
+import { TournamentDemo } from "@/components/site/tournament-demo";
 import { UsesTabs, type Use } from "@/components/site/uses-tabs";
 import { ButtonLink } from "@/components/ui/button";
 import { getSession } from "@/lib/auth/session";
@@ -18,8 +19,7 @@ export const metadata: Metadata = {
 };
 
 // The landing page: header, hero with the live sample board beside it, "what it can do for you"
-// tabs, the six steps, contact and footer. Still to move over from index.php: the judge-scoring
-// demo ("One tournament, three screens") and the live-quiz walkthrough.
+// tabs, the interactive tournament demo, the six steps, contact and footer.
 export default async function HomePage() {
   const { lang, t } = await getTranslator();
   const session = await getSession();
@@ -163,6 +163,38 @@ export default async function HomePage() {
             <h2 className={sectionTitle}>{t("What QuizoTab can do for you")}</h2>
             <p className={sectionText}>{t("The same scoreboard works for any crowd. Pick the kind of event you run.")}</p>
             <UsesTabs uses={uses} label={t("Kinds of events")} />
+          </div>
+        </section>
+
+        <section id="demo" className="scroll-mt-8 border-y border-line bg-studio-deep py-24">
+          <div className="mx-auto max-w-page px-6">
+            <h2 className={sectionTitle}>{t("One tournament, three screens")}</h2>
+            <p className={sectionText}>
+              {t("Every score travels the same path, from the judge's phone to the admin console to the big screen. Watch it happen below, or take over and try it yourself.")}
+            </p>
+            <TournamentDemo
+              labels={{
+                judge: t("The judge scores"),
+                admin: t("The admin approves"),
+                room: t("The room sees it"),
+                demoSteps: t("Demo steps"),
+                roomTitle: t("Lake Zone Schools Quiz"),
+                lowerKilimanjaro: t("Lower Kilimanjaro High's score"),
+                raiseKilimanjaro: t("Raise Kilimanjaro High's score"),
+                lowerMwanza: t("Lower Mwanza Owls' score"),
+                raiseMwanza: t("Raise Mwanza Owls' score"),
+                submitScore: t("Submit score"),
+                approveScore: t("Approve score"),
+                noScoresWaiting: t("No scores waiting"),
+                waitingForJudge: t("Waiting for the judge"),
+                semiFinalRoom: t("Room 2, semi-final"),
+                nextRound: t("Next round"),
+                points: t("points"),
+                round: t("Round"),
+                submitted: t("Score sent for review"),
+                approved: t("Approved — standings updated"),
+              }}
+            />
           </div>
         </section>
 
