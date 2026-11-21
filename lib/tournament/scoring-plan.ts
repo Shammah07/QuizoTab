@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, sum } from "drizzle-orm";
+import { and, eq, inArray, max, ne, or, sum } from "drizzle-orm";
 import { z } from "zod";
 import { ApiError } from "@/lib/api";
 import type { Db } from "@/lib/db";
@@ -121,10 +121,14 @@ export async function verifyAttempt(tx: Db, id: string, roomId: string, attempt:
   }
   // Draw edits can give the same team another context in the same round.
   const scores = tournamentScoreEntries;
-  const [total] = await tx.select({ points: sum(scores.points) }).from(scores).where(and(
+  // A correction reserves whichever is larger: the effective award or the
+  // pending replacement. Re-evaluate the target attempt at its proposed value.
+  const otherAttempts = tx.select({ points: max(scores.points).as("reserved_points") }).from(scores).where(and(
     eq(scores.tournamentId, id), eq(scores.teamId, team.id), eq(scores.roundId, round.id),
     inArray(scores.status, ["approved", "pending"]),
-  ));
+    or(ne(scores.contextId, attempt.contextId), ne(scores.questionKey, attempt.questionKey)),
+  )).groupBy(scores.contextId, scores.questionKey).as("other_attempts");
+  const [total] = await tx.select({ points: sum(otherAttempts.points) }).from(otherAttempts);
   if (Number(total.points) + attempt.points > roundRange(config, round.id).max) {
     throw new ApiError(409, "The submission would exceed this team's round limit.");
   }

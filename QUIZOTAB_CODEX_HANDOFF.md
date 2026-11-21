@@ -110,6 +110,25 @@ journal hashes and the enforced gate before opening rollback-only fixtures.
 Only the test adapter substitutes the engine read for a synthetic tournament
 to exercise the post-gate path. Application code has no activation override.
 
+## Unit 4 room-host review (dormant)
+
+Under `/api/tournaments/[id]/rooms/[roomId]`, the assigned host can GET
+`scores/pending` and POST `decisions` with `{scoreId, decision: "approve"}`
+or `{scoreId, decision: "reject", reason}`. A decided entry returns 409 on
+another decision. The server rechecks the release, room assignment, attempt
+eligibility and point limits under the tournament lock. A former judge who
+becomes a host cannot review their own submission.
+
+An assigned judge can POST `corrections` with `{scoreId, points, reason,
+clientRequestId}`, where scoreId identifies the current approved revision.
+The prior award stays effective until a host approves its pending replacement.
+Approval preserves the prior award's original reviewer, review time and points,
+marks it superseded, and records the superseding actor in its audit event.
+Rejection leaves the prior award effective. The submitted event and correction
+entry retain the proposal reason; the rejected event retains the rejection reason.
+Round capacity reserves the larger pending/approved value per attempt. None
+of these operations writes to the legacy scores document or spectator response.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

@@ -9,6 +9,7 @@ import * as schema from "@/lib/db/schema";
 import { FORMAT_KEYS } from "@/lib/tournament/rules";
 import { readDevDatabase } from "./dev-database";
 import { scoringFixture, verifyAtomicSubmission } from "./score-submission-fixture";
+import { verifyRoomReview } from "./score-review-checks";
 
 const urls = readDevDatabase();
 const target = new URL(urls.direct);
@@ -36,6 +37,7 @@ try {
       const fixture = await scoringFixture(tx, format);
       fixtureId = fixture.id;
       await verifyAtomicSubmission(tx, fixture);
+      await verifyRoomReview(tx, fixture);
       const outside = await independent.select({ id: schema.tournamentScoreEntries.id }).from(schema.tournamentScoreEntries)
         .where(eq(schema.tournamentScoreEntries.tournamentId, fixture.id));
       assert.equal(outside.length, 0);
@@ -43,7 +45,7 @@ try {
     }), error => error === rolledBack);
     assert.equal((await independent.select({ id: schema.tournaments.id }).from(schema.tournaments)
       .where(eq(schema.tournaments.id, fixtureId))).length, 0);
-    console.log("ok  Neon audit failure rollback, pending receipt, replay, isolation and fixture rollback:", format);
+    console.log("ok  Neon submission, review, correction history, audit rollback and fixture rollback:", format);
   }
 } finally {
   await Promise.all([writer.end(), observer.end()]);

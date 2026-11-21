@@ -4,6 +4,30 @@ import type { Session } from "@/lib/auth/session";
 import type { Db } from "@/lib/db";
 import { changeRoom, listRoomSetup } from "./room-management";
 import { submitRoomScore } from "./room-scoring";
+import { decideRoomScore, pendingRoomScores, proposeCorrection } from "./score-review";
+
+type RoomContext = { params: Promise<{ id: string; roomId: string }> };
+
+export function scoreReviewHandlers(database: () => Db, session: () => Promise<Session | null>) {
+  return {
+    pending: route<RoomContext>(async (_, { params }) => {
+      const actor = authenticated(await session());
+      const { id, roomId } = await params;
+      return { scores: await pendingRoomScores(database(), id, roomId, actor) };
+    }),
+    decide: route<RoomContext>(async (request, { params }) => {
+      const actor = authenticated(await session());
+      const { id, roomId } = await params;
+      return decideRoomScore(database(), id, roomId, actor, await body(request));
+    }),
+    correct: route<RoomContext>(async (request, { params }) => {
+      const actor = authenticated(await session());
+      const { id, roomId } = await params;
+      const { created, ...receipt } = await proposeCorrection(database(), id, roomId, actor, await body(request));
+      return Response.json(receipt, { status: created ? 201 : 200, headers: { "Cache-Control": "no-store" } });
+    }),
+  };
+}
 
 export function scoreSubmissionHandler(database: () => Db, session: () => Promise<Session | null>) {
   return route<{ params: Promise<{ id: string; roomId: string }> }>(async (request, { params }) => {

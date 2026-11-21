@@ -46,3 +46,16 @@ async function requireRoomRole(db: Db, id: string, roomId: string, session: Sess
 }
 export const requireRoomJudge = (db: Db, id: string, roomId: string, session: Session | null) => requireRoomRole(db, id, roomId, session, "judge");
 export const requireRoomHost = (db: Db, id: string, roomId: string, session: Session | null) => requireRoomRole(db, id, roomId, session, "room_host");
+
+export function withScoringRoom<T>(db: Db, id: string, roomId: string, session: Session | null, role: RoomRole,
+  work: (tx: Db, actor: Session, active: boolean) => Promise<T>) {
+  const actor = authenticated(session);
+  if (!looksLikeId(id)) throw new ApiError(404, "Tournament not found.");
+  return db.transaction(async tx => {
+    const [tournament] = await tx.select({ status: tournaments.status }).from(tournaments)
+      .where(eq(tournaments.id, id)).for("update");
+    if (!tournament) throw new ApiError(404, "Tournament not found.");
+    await requireRoomRole(tx, id, roomId, actor, role);
+    return work(tx, actor, tournament.status === "active");
+  });
+}

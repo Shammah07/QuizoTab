@@ -11,6 +11,7 @@ import { FORMAT_KEYS } from "@/lib/tournament/rules";
 import { saveScoringPlan } from "@/lib/tournament/scoring-plan";
 import { publicView, writeState } from "@/lib/tournament/store";
 import { scoringFixture, verifyAtomicSubmission } from "./score-submission-fixture";
+import { verifyConcurrentReview, verifyRoomReview } from "./score-review-checks";
 
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
@@ -57,6 +58,9 @@ try {
     assert.equal((await post(judges[0], { ...data, judgeUserId: judges[1].userId })).status, 400);
     assert.equal((await post(judges[0], data, id, "west")).status, 403);
     const another = await scoringFixture(db, format);
+    const { host, approvedId } = await verifyRoomReview(db, another);
+    await verifyConcurrentReview(db, another, host, approvedId);
+    console.log("ok  room review, competing decisions and immutable correction history:", format);
     assert.equal((await post(judges[0], data, another.id)).status, 403);
     const requests = [data.teamId, f.teams[1].id].map(teamId => ({ ...data, teamId, questionKey: "q-c", clientRequestId: randomUUID() }));
     const [first, second] = await Promise.all([post(judges[0], requests[0]), submit(requests[1], judges[1])]);

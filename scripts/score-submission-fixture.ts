@@ -11,7 +11,7 @@ import { isPointsFormat, type Format } from "@/lib/tournament/rules";
 // Test only: project the gated read for exactly one synthetic tournament. All
 // locks, membership queries, constraints and writes use the actual adapter.
 // Neither the fixture row nor the database activation constraint is changed.
-export function fixtureAdapter(db: Db, fixtureId: string, failAudit = false): Db {
+export function fixtureAdapter(db: Db, fixtureId: string, failAudit: boolean | "approved" = false): Db {
   return new Proxy(db, {
     get(target, prop) {
       if (prop !== "transaction") return Reflect.get(target, prop);
@@ -25,7 +25,8 @@ export function fixtureAdapter(db: Db, fixtureId: string, failAudit = false): Db
           };
           if (method === "insert" && failAudit) return (table: typeof s.tournamentScoreEvents) => {
             if (table === s.tournamentScoreEvents) return {
-              values: (values: typeof table.$inferInsert) => inner.insert(table).values({ ...values, actorUserId: -1 }),
+              values: (values: typeof table.$inferInsert) => inner.insert(table)
+                .values(failAudit === true || values.eventType === failAudit ? { ...values, actorUserId: -1 } : values),
             };
             return inner.insert(table);
           };
