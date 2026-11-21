@@ -34,7 +34,7 @@ export function officialFixture(pair: Pairing, config: TournamentConfig, plan: R
   const rows = awards.filter(r => r.contextId === pair.id && r.roomId === pair.roomId);
   const rounds = stageRoundsFor(config, pair.stage, pair.matchLabel);
   const teams = [pair.teamAId, pair.teamBId].filter((id): id is string => !!id);
-  const complete = !!(pair.released && pair.roomId && teams.length && plan.completedContexts?.includes(pair.id) &&
+  const covered = !!(pair.released && pair.roomId && teams.length &&
     (teams.length === 1 || (rounds.length && rounds.every(round => {
       const questions = plan.rounds.find(r => r.id === round.id)?.questions;
       return questions?.length && teams.every(team => {
@@ -42,6 +42,7 @@ export function officialFixture(pair: Pairing, config: TournamentConfig, plan: R
         return questions.every(q => covered?.includes(q.id));
       });
     }))));
+  const complete = covered && !!plan.completedContexts?.includes(pair.id);
   const result = complete ? matchWinnerDetail(pair, config, rows) : { winnerId: null, viaTiebreak: false };
-  return { complete, winnerId: result.winnerId && teams.includes(result.winnerId) ? result.winnerId : null, viaTiebreak: result.viaTiebreak };
+  return { covered, complete, winnerId: result.winnerId && teams.includes(result.winnerId) ? result.winnerId : null, viaTiebreak: result.viaTiebreak };
 }

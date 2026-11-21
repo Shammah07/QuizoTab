@@ -1,5 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, notExists, or, sql } from "drizzle-orm";
+import { isDeepStrictEqual } from "node:util";
 import { readScoringPlan } from "./scoring-plan";
 import { officialAwards, officialFixture, roundTotals } from "./official-standings";
 import { z } from "zod";
@@ -18,6 +19,8 @@ import {
   normalizeScores,
   normalizeSharing,
   roundRange,
+  stageRoundsFor,
+  prelimMatches,
   uid,
   type Format,
   type Judge,
@@ -199,7 +202,28 @@ export async function writeState<K extends StateKey>(db: Db, tournamentId: strin
 }
 
 // The config also carries the name and dates, which the tournament row shows in lists
+async function storedScoringPlan(db: Db, id: string) {
+  const [doc] = await db.select({value:tournamentState.value}).from(tournamentState)
+    .where(and(eq(tournamentState.tournamentId,id),eq(tournamentState.key,"scoringPlan")));
+  return readScoringPlan(doc?.value);
+}
+
 export async function saveConfig(db: Db, tournamentId: string, config: TournamentConfig) {
+  const plan = await storedScoringPlan(db, tournamentId);
+  if (plan.completedContexts?.length) {
+    const { config: previous, pairings } = await readState(db, tournamentId);
+    const changed = plan.completedContexts.some(id => {
+      const pair = pairings.find(p => p.id === id);
+      const roster = plan.rosters.find(r => r.id === id);
+      const rounds = (c: TournamentConfig) => pair ? stageRoundsFor(c, pair.stage, pair.matchLabel)
+        : c.rounds.filter(r => r.id === roster?.roundId);
+      return !isDeepStrictEqual(rounds(previous), rounds(config));
+    });
+    if (changed || previous.format !== config.format || previous.maxScorePerRound !== config.maxScorePerRound ||
+        previous.qualificationCount !== config.qualificationCount || !isDeepStrictEqual(prelimMatches(previous), prelimMatches(config))) {
+      throw new ApiError(409, "Reopen affected contexts before changing scoring rules.");
+    }
+  }
   await writeState(db, tournamentId, "config", config);
   await db
     .update(tournaments)
@@ -273,6 +297,15 @@ export async function updateTeam(db: Db, tournamentId: string, teamId: unknown, 
 // Removes the team and the scores it had
 export async function deleteTeam(db: Db, tournamentId: string, teamId: unknown) {
   if (!looksLikeId(teamId)) return false;
+  const plan = await storedScoringPlan(db,tournamentId);
+  if (plan.completedContexts?.length) {
+    const closed = new Set(plan.completedContexts);
+    const { pairings } = await readState(db,tournamentId);
+    if (pairings.some(p => closed.has(p.id) && [p.teamAId,p.teamBId].includes(teamId)) ||
+        plan.rosters.some(r => closed.has(r.id) && r.teamIds.includes(teamId))) {
+      throw new ApiError(409,"A completed context still references this team.");
+    }
+  }
   const [gone] = await db
     .delete(teams)
     .where(and(eq(teams.id, teamId), eq(teams.tournamentId, tournamentId)))
@@ -457,6 +490,7 @@ export async function tournamentForGuestCode(db: Db, code: string) {
 
 // Clears every team, score and pairing of a tournament; its settings, rooms and judges are kept
 export async function resetTournament(db: Db, tournamentId: string) {
+  if ((await storedScoringPlan(db,tournamentId)).completedContexts?.length) throw new ApiError(409,"Completed contexts must be retained.");
   await db.delete(teams).where(eq(teams.tournamentId, tournamentId));
   await writeState(db, tournamentId, "scores", []);
   await writeState(db, tournamentId, "pairings", []);

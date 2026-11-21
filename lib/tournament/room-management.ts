@@ -8,6 +8,7 @@ import type { Session } from "@/lib/auth/session";
 import type { Db } from "@/lib/db";
 import { teams, tournaments, tournamentRoomStaff as staff, tournamentScoreEntries, tournamentState, users } from "@/lib/db/schema";
 import { withRoomOwner } from "./room-access";
+import { hasLaterDraw } from "./fixture-lifecycle";
 import { officialAwards, officialFixture, roundTotals } from "./official-standings";
 import { readScoringPlan } from "./scoring-plan";
 import { computeStandings, firstKnockoutStage, knockoutStagesFrom, prelimMatches, normalizePairings, type Pairing, type Room } from "./rules";
@@ -63,6 +64,13 @@ export async function saveRoomPairings(tx: Db, id: string, proposed: unknown, ex
     const [doc] = await tx.select({ value: tournamentState.value }).from(tournamentState)
       .where(and(eq(tournamentState.tournamentId,id),eq(tournamentState.key,"scoringPlan")));
     const plan = readScoringPlan(doc?.value);
+    for (const closed of plan.completedContexts ?? []) {
+      const original = pairings.find(p => p.id === closed);
+      if (original && (!isDeepStrictEqual(original,next.find(p => p.id === closed)) ||
+          (hasLaterDraw(original,pairings,config) && !hasLaterDraw(original,next,config)))) {
+        throw new ApiError(409,"A completed fixture or its downstream draw is protected.");
+      }
+    }
     const awards = await officialAwards(tx,id);
     const registered = await tx.select({ id: teams.id, name: teams.name }).from(teams).where(eq(teams.tournamentId,id));
     const prelim = config.format === "championship" ? prelimMatches(config) : [];

@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api";
 import type { Db } from "@/lib/db";
 import { teams, tournamentScoreEntries, tournamentState } from "@/lib/db/schema";
 import { isPointsFormat, normalizeConfig, normalizePairings, roundRange, stageRoundsFor, type TournamentConfig } from "./rules";
-import { officialAwards, officialFixture } from "./official-standings";
+import { isDeepStrictEqual } from "node:util";
 import { readState, storedRooms } from "./store";
 
 const key = z.string().trim().min(1).max(80);
@@ -30,7 +30,7 @@ function unique(ids: string[]) {
   return new Set(ids).size === ids.length;
 }
 
-function validRound(config: TournamentConfig, round: Plan["rounds"][number]) {
+export function validRound(config: TournamentConfig, round: Plan["rounds"][number]) {
   if (config.rounds.filter(r => r.id === round.id).length !== 1 || !unique(round.questions.map(q => q.id))) return false;
   const range = roundRange(config, round.id);
   return round.questions.every(q => q.minPoints <= q.maxPoints) &&
@@ -50,12 +50,22 @@ export async function saveScoringPlan(tx: Db, id: string, input: unknown) {
   if (!unique(plan.rosters.map(r => r.id)) || (plan.rosters.length && !isPointsFormat(config))) {
     throw new ApiError(422, "Room rosters require a points-format tournament and distinct IDs.");
   }
-  if (plan.completedContexts?.length) {
-    const awards = await officialAwards(tx,id);
-    if (!unique(plan.completedContexts) || !plan.completedContexts.every(key => {
-      const fixture = pairings.find(p => p.id === key);
-      return fixture && officialFixture(fixture,config,plan,awards).complete;
-    })) throw new ApiError(409,"Only released fixtures with full approved question coverage or a bye can be marked complete.");
+  const [saved] = await tx.select({value: tournamentState.value}).from(tournamentState)
+    .where(and(eq(tournamentState.tournamentId,id),eq(tournamentState.key,"scoringPlan")));
+  const previous = readScoringPlan(saved?.value);
+  const closed = previous.completedContexts ?? [];
+  if (plan.completedContexts && !isDeepStrictEqual([...plan.completedContexts].sort(), [...closed].sort())) {
+    throw new ApiError(409,"Use the room lifecycle command to complete or reopen a context.");
+  }
+  plan.completedContexts = closed;
+  for (const contextId of closed) {
+    const roster = previous.rosters.find(r => r.id === contextId);
+    const pair = pairings.find(p => p.id === contextId);
+    const rounds = roster ? [roster.roundId] : pair ? stageRoundsFor(config,pair.stage,pair.matchLabel).map(r => r.id) : [];
+    if (!isDeepStrictEqual(roster,plan.rosters.find(r => r.id === contextId)) || rounds.some(roundId =>
+      !isDeepStrictEqual(previous.rounds.find(r => r.id === roundId),plan.rounds.find(r => r.id === roundId)))) {
+      throw new ApiError(409,"Reopen the context before changing its scoring plan.");
+    }
   }
   const roomIds = new Set((await storedRooms(tx, id)).map(r => r.id));
   const teamIds = new Set((await tx.select({ id: teams.id }).from(teams).where(eq(teams.tournamentId, id))).map(t => t.id));
@@ -109,6 +119,7 @@ export async function verifyAttempt(tx: Db, id: string, roomId: string, attempt:
   const value = (key: string) => docs.find(doc => doc.key === key)?.value;
   const plan = planSchema.safeParse(value("scoringPlan"));
   if (!plan.success) throw new ApiError(409, "Configure the scoring plan before submitting.");
+  if (plan.data.completedContexts?.includes(attempt.contextId)) throw new ApiError(409,"Reopen the completed context before scoring.");
   const config = normalizeConfig(value("config"));
   const round = plan.data.rounds.find(r => r.id === attempt.roundId);
   if (!round || !validRound(config, round)) throw new ApiError(422, "Round or question limits are unavailable.");

@@ -62,9 +62,12 @@ export function decideRoomScore(db: Db, id: string, roomId: string, session: Ses
     if (!active || entry.status !== "pending") throw new ApiError(409, "Only a pending score in an active tournament can be reviewed.");
     await verifyAttempt(tx, id, roomId, entry);
     const status = data.decision === "approve" ? "approved" : "rejected";
-    if (entry.correctionOf && status === "approved") {
+    // A rejected predecessor stays rejected. Only an effective award is superseded.
+    const predecessor = entry.correctionOf && status === "approved"
+      ? await roomScore(tx, id, roomId, entry.correctionOf) : null;
+    if (predecessor && predecessor.status !== "rejected") {
       const [original] = await tx.update(scores).set({ status: "superseded" }).where(and(
-        roomScope(id, roomId), eq(scores.id, entry.correctionOf), eq(scores.status, "approved"),
+        roomScope(id, roomId), eq(scores.id, predecessor.id), eq(scores.status, "approved"),
       )).returning({ id: scores.id });
       if (!original) throw new ApiError(409, "The original award is no longer approved.");
       await tx.insert(events).values({ scoreEntryId: original.id, eventType: "superseded", actorUserId: host.userId,
@@ -97,8 +100,8 @@ export function proposeCorrection(db: Db, id: string, roomId: string, session: S
       return { created: false, scoreId: retry.id, status: "pending" as const };
     }
     const original = await roomScore(tx, id, roomId, data.scoreId);
-    if (!active || original.status !== "approved") throw new ApiError(409, "Only the current approved score can be corrected.");
-    if (original.points === data.points) throw new ApiError(422, "Corrected points must differ from the approved award.");
+    if (!active || !["approved", "rejected"].includes(original.status)) throw new ApiError(409, "Choose an approved award or the latest rejected attempt.");
+    if (original.status === "approved" && original.points === data.points) throw new ApiError(422, "Corrected points must differ from the approved award.");
     const { contextId, teamId, roundId, questionKey } = original;
     const attempt = { contextId, teamId, roundId, questionKey };
     await verifyAttempt(tx, id, roomId, { ...attempt, points: data.points });
@@ -107,6 +110,12 @@ export function proposeCorrection(db: Db, id: string, roomId: string, session: S
       eq(scores.tournamentId, id), eq(scores.contextId, contextId), eq(scores.teamId, teamId),
       eq(scores.roundId, roundId), eq(scores.questionKey, questionKey),
     ));
+    if (original.status === "rejected") {
+      const [effective] = await tx.select({ id: scores.id }).from(scores).where(and(
+        roomScope(id, roomId), eq(scores.contextId, contextId), eq(scores.teamId, teamId),
+        eq(scores.roundId, roundId), eq(scores.questionKey, questionKey), eq(scores.status, "approved")));
+      if (effective || original.revision !== last.revision) throw new ApiError(409, "Choose the effective award or the latest rejected revision.");
+    }
     const [entry] = await tx.insert(scores).values({ ...attempt, tournamentId: id, roomId, judgeUserId: judge.userId,
       correctionOf: original.id, points: data.points, reason: data.reason, clientRequestId: data.clientRequestId,
       revision: (last.revision ?? original.revision) + 1,

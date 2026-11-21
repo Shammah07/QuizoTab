@@ -1,3 +1,4 @@
+import { verifyLifecycle } from "./lifecycle-checks";
 import { checkSpectators } from "./spectator-checks";
 // Opt-in only. Roll back the whole fixture, including append-only audit events.
 import assert from "node:assert/strict";
@@ -34,12 +35,14 @@ try {
   console.log("Verified live direct and pooled development targets, journal and enforced engine gate.");
   for (const format of FORMAT_KEYS) {
     let fixtureId = "";
+    let lifecycleId = "";
     await assert.rejects(db.transaction(async tx => {
       const fixture = await scoringFixture(tx, format);
       fixtureId = fixture.id;
       await verifyAtomicSubmission(tx, fixture);
       await verifyRoomReview(tx, fixture);
       await checkSpectators(tx,fixture);
+      lifecycleId = await verifyLifecycle(tx,format);
       const outside = await independent.select({ id: schema.tournamentScoreEntries.id }).from(schema.tournamentScoreEntries)
         .where(eq(schema.tournamentScoreEntries.tournamentId, fixture.id));
       assert.equal(outside.length, 0);
@@ -47,6 +50,8 @@ try {
     }), error => error === rolledBack);
     assert.equal((await independent.select({ id: schema.tournaments.id }).from(schema.tournaments)
       .where(eq(schema.tournaments.id, fixtureId))).length, 0);
+    assert.equal((await independent.select({ id: schema.tournaments.id }).from(schema.tournaments)
+      .where(eq(schema.tournaments.id, lifecycleId))).length, 0);
     console.log("ok  Neon submission, review, official standings, room isolation, correction history, audit rollback and fixture rollback:", format);
   }
 } finally {

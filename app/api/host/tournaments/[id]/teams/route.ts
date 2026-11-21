@@ -1,5 +1,6 @@
 import { ApiError, body, route, unwrap } from "@/lib/api";
-import { db } from "@/lib/db";
+import { withRoomOwner } from "@/lib/tournament/room-access";
+import { db, transactionDb } from "@/lib/db";
 import { hostTournament } from "@/lib/tournament/api-helpers";
 import { addTeam, deleteTeam, loadTeams, updateTeam } from "@/lib/tournament/store";
 
@@ -20,7 +21,10 @@ export const PUT = route<Context>(async (request, { params }) => {
 });
 
 export const DELETE = route<Context>(async (request, { params }) => {
-  const { tournament } = await hostTournament(db(), (await params).id);
-  if (!(await deleteTeam(db(), tournament.id, (await body(request)).id))) throw new ApiError(404, "Team not found.");
+  const { tournament, user } = await hostTournament(db(), (await params).id);
+  const teamId = (await body(request)).id;
+  await withRoomOwner(transactionDb(), tournament.id, user, async tx => {
+    if (!await deleteTeam(tx, tournament.id, teamId)) throw new ApiError(404, "Team not found.");
+  });
   return { teams: await loadTeams(db(), tournament.id) };
 });

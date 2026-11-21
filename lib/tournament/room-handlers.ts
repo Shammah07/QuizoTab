@@ -3,6 +3,7 @@ import { authenticated, requireActiveAssignment } from "./room-access";
 import type { Session } from "@/lib/auth/session";
 import type { Db } from "@/lib/db";
 import { changeRoom, listRoomSetup } from "./room-management";
+import { roomCompletion, ownerReopening } from "./fixture-lifecycle";
 import { submitRoomScore } from "./room-scoring";
 import { decideRoomScore, pendingRoomScores, proposeCorrection } from "./score-review";
 
@@ -53,5 +54,19 @@ export function roomHandlers(database: () => Db, session: () => Promise<Session 
   return {
     GET: route<Context>(async (_, { params }) => listRoomSetup(database(), (await params).id, await session())),
     POST: route<Context>(async (request, { params }) => changeRoom(database(), (await params).id, await session(), await body(request))),
+  };
+}
+
+export function lifecycleHandlers(database: () => Db, session: () => Promise<Session | null>, owner = false) {
+  const service = owner ? ownerReopening : roomCompletion;
+  return {
+    GET: route<RoomContext>(async (request,{params}) => {
+      const {id,roomId} = await params;
+      return service(database(),id,roomId,await session(),request.nextUrl.searchParams.get("contextId"),true);
+    }),
+    POST: route<RoomContext>(async (request,{params}) => {
+      const {id,roomId} = await params;
+      return service(database(),id,roomId,await session(),await body(request));
+    }),
   };
 }

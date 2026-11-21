@@ -135,6 +135,14 @@ The audience directory and guest-code entry are at `/host/t`. Existing UUID link
 
 The SSR pages and six-second refresh use the same read-only repeatable-read projection. Legacy tournaments use approved JSON scores. Room scoring uses only the effective approved revision per attempt. A released fixture needs an owner-set `completedContexts` marker in the scoring plan and approved coverage for every planned question and participant. A released bye can be explicitly closed. The server checks prerequisite stages and eligible entrants before saving a subsequent draw. The existing database constraint still permits only legacy tournaments. Older legacy approvals have no reliable approval timestamp.
 
+## Unit 6A — controlled closure and rejected-score replacement
+
+Under `/api/tournaments/[id]/rooms/[roomId]`, the existing corrections POST accepts a reasoned replacement against the latest rejected revision when the attempt has no effective award. Approval preserves its rejected predecessor. Ordinary corrections still target the effective approved award.
+
+GET `completion?contextId=...` as the assigned host (or GET `reopen?contextId=...` as the owner) for the configuration digest, tournament-wide lifecycle revision and completion status. POST the context ID and both revisions to the corresponding endpoint. Reopen additionally requires a reason. Refresh on a revision conflict. An immediate exact close retry returns the recorded state. New scoring requires an open context; existing submission receipts can still be retried.
+
+The tournament lock serializes lifecycle, assignment and scoring commands. Closure checks release, participant and question coverage, pending reviews and outcome. Knockout ties require the recorded tiebreak; preliminary draws and points rosters do not need a winner. Generic plan edits retain completion markers. Each successful transition inserts a separate tournament-state row under the fixtureEvent prefix; existing events are never updated by the application. These lifecycle records have application-level protection. The database trigger continues to protect score events. A later draft or released draw blocks reopening; downstream adjudication is deferred to Unit 6B. The legacy-only database constraint stays in place.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

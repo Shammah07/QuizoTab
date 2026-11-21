@@ -38,7 +38,7 @@ type Props = {
   config: TournamentConfig;
   teams: Team[];
   scores: Award[];
-  fixtureResults: Record<string,{ complete: boolean; winnerId: string | null; viaTiebreak: boolean }> | null;
+  fixtureResults: Record<string,{ covered: boolean; complete: boolean; winnerId: string | null; viaTiebreak: boolean }> | null;
   pairings: Pairing[];
   rooms: Room[];
   judges: Judge[];
@@ -179,7 +179,7 @@ export function PairingsPanel({ config, teams, scores, fixtureResults, pairings,
                 {rows.map((p) => {
                   const knockout = section.stage !== "preliminary";
                   const detail = knockout ? (fixtureResults?.[p.id] ?? matchWinnerDetail(p, config, scores)) : { winnerId: null, viaTiebreak: false };
-                  const tied = knockout && (!fixtureResults || fixtureResults[p.id]?.complete) && isTiedNeedingBreak(p, config, scores);
+                  const tied = knockout && (!fixtureResults || (fixtureResults[p.id]?.covered && !fixtureResults[p.id]?.complete)) && isTiedNeedingBreak(p, config, scores);
                   const option = (team: Team) => (
                     <option key={team.id} value={team.id}>
                       {team.name}

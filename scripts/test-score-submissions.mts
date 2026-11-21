@@ -1,3 +1,4 @@
+import { verifyLifecycle } from "./lifecycle-checks";
 import { checkSpectators, checkSpectatorRefresh } from "./spectator-checks";
 import { spectatorView } from "@/lib/tournament/spectator";
 import assert from "node:assert/strict";
@@ -21,6 +22,7 @@ try {
   await checkSpectatorRefresh();
   await migrate(db, { migrationsFolder: "./drizzle" });
   for (const format of FORMAT_KEYS) {
+    await verifyLifecycle(db,format);
     const f = await scoringFixture(db, format);
     const { data, submit, id, judges, plan, pairing } = f;
     const pub = () => spectatorView(f.adapter, id, "standings");

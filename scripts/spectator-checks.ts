@@ -1,3 +1,4 @@
+import { roomCompletion, ownerReopening } from "@/lib/tournament/fixture-lifecycle";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -71,8 +72,14 @@ export async function checkSpectators(db: Db, f: Awaited<ReturnType<typeof scori
         await decideRoomScore(adapter,id,"hall",{...westHost,...hallHost},{scoreId:receipt.scoreId,decision:"approve"});
       }
       await assert.rejects(advance(),{status:409});
-      await saveScoringPlan(db,id,{...plan,completedContexts:[pair.id,west.id]});
+      for (const [p,host] of [[pair,{...westHost,...hallHost}],[west,westHost]] as const) {
+        const room = p.roomId!;
+        const {configRevision,lifecycleRevision} = await roomCompletion(adapter,id,room,host,p.id,true);
+        await roomCompletion(adapter,id,room,host,{contextId:p.id,configRevision,lifecycleRevision});
+      }
       await advance();
+      const {configRevision,lifecycleRevision} = await ownerReopening(adapter,id,"hall",westHost,pair.id,true);
+      await assert.rejects(ownerReopening(adapter,id,"hall",westHost,{contextId:pair.id,configRevision,lifecycleRevision,reason:"Recheck result"}),{status:409});
       const board = await spectatorView(adapter,id,"standings","west");
       assert.deepEqual(board.tables[1].rows.map(t => t.name),["A","C"]);
     }
