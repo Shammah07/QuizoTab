@@ -99,6 +99,7 @@ export type TournamentInput = {
   startDate?: unknown;
   endDate?: unknown;
   format?: unknown;
+  scoringEngineVersion?: unknown;
   // The rules of a tournament to copy (same format), or nothing to start from the format's usual rounds
   template?: unknown;
 };
@@ -106,6 +107,9 @@ export type TournamentInput = {
 // Payments are skipped for now: every format is free and the tournament is made straight away
 // (on the PHP site, payments.php created it once Pesapal confirmed the payment)
 export async function createTournament(db: Db, ownerId: number, input: TournamentInput): Promise<Result<TournamentRow>> {
+  if (input.scoringEngineVersion !== undefined && input.scoringEngineVersion !== "legacy") {
+    return fail(409, "Only legacy tournament scoring is enabled.");
+  }
   const parsed = detailsSchema.safeParse(input);
   if (!parsed.success) {
     const field = parsed.error.issues[0]?.path[0];

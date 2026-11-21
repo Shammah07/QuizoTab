@@ -102,6 +102,10 @@ await check("creating a tournament checks its details and stores its documents",
 
   const created = value(await createTournament(db, asha.id, { name: "Lake Zone Schools Quiz", category: "Senior Quiz", year: 2026, startDate: "2026-03-01", endDate: "2026-03-03", format: "championship" }));
   tournamentId = created.id;
+  const [stored] = await db.select().from(schema.tournaments).where(eq(schema.tournaments.id, tournamentId));
+  assert.equal(stored.scoringEngineVersion, "legacy");
+  const pilot = await createTournament(db, asha.id, { name: "Pilot", category: "Quiz", year: 2026, scoringEngineVersion: "room_v1" });
+  assert.equal(error(pilot), "Only legacy tournament scoring is enabled.");
   const state = await readState(db, tournamentId);
   assert.equal(state.config.name, "Lake Zone Schools Quiz");
   assert.equal(state.config.format, "championship");

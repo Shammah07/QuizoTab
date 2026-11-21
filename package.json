@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "tsx --conditions=react-server scripts/test-accounts.mts && tsx --conditions=react-server scripts/test-quiz.mts && tsx --conditions=react-server scripts/test-tournament.mts",
+    "test": "tsx --conditions=react-server scripts/test-accounts.mts && tsx --conditions=react-server scripts/test-quiz.mts && tsx --conditions=react-server scripts/test-tournament.mts && tsx --conditions=react-server scripts/test-room-scoring.mts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",

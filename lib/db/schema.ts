@@ -6,7 +6,9 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   char,
+  check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -91,6 +93,10 @@ export const authTokens = pgTable(
 // ---------- Tournaments (were in Supabase) ----------
 
 export const tournamentStatus = pgEnum("tournament_status", ["draft", "active", "archived"]);
+export const scoringEngine = pgEnum("scoring_engine", ["legacy", "room_v1"]);
+export const roomStaffRole = pgEnum("room_staff_role", ["room_host", "judge"]);
+export const scoreStatus = pgEnum("score_status", ["pending", "approved", "rejected", "superseded"]);
+export const scoreEventType = pgEnum("score_event_type", ["submitted", "approved", "rejected", "superseded"]);
 
 export const tournaments = pgTable(
   "tournaments",
@@ -105,9 +111,14 @@ export const tournaments = pgTable(
     startDate: date("start_date"),
     endDate: date("end_date"),
     status: tournamentStatus("status").notNull().default("active"),
+    scoringEngineVersion: scoringEngine("scoring_engine_version").notNull().default("legacy"),
     createdAt: createdAt(),
   },
-  (t) => [index("tournaments_owner").on(t.ownerId, t.status)],
+  (t) => [
+    index("tournaments_owner").on(t.ownerId, t.status),
+    // Lift only after all readers and writers support explicit pilot enrollment.
+    check("tournaments_legacy_engine_only", sql`${t.scoringEngineVersion} = 'legacy'`),
+  ],
 );
 
 // The tournament app keeps its data as named JSON documents: config, scores, pairings, rooms, judges, sharing.
@@ -143,8 +154,76 @@ export const teams = pgTable(
   (t) => [
     // Two teams in one tournament can't share a name, whatever the capitals. Other tournaments can reuse it.
     uniqueIndex("teams_tournament_name_unique").on(t.tournamentId, sql`lower(${t.name})`),
+    uniqueIndex("teams_tournament_id_unique").on(t.tournamentId, t.id),
   ],
 );
+
+export const tournamentRoomStaff = pgTable("tournament_room_staff", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id),
+  roomId: text("room_id").notNull(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  role: roomStaffRole("role").notNull(),
+  createdAt: createdAt(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (t) => [
+  check("room_staff_room_present", sql`btrim(${t.roomId}) <> ''`),
+  check("room_staff_revocation_time", sql`${t.revokedAt} >= ${t.createdAt}`),
+  uniqueIndex("room_staff_active_user").on(t.tournamentId, t.roomId, t.userId).where(sql`${t.revokedAt} is null`),
+  uniqueIndex("room_staff_active_host").on(t.tournamentId, t.roomId).where(sql`${t.revokedAt} is null and ${t.role} = 'room_host'`),
+]);
+
+export const tournamentScoreEntries = pgTable("tournament_score_entries", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id),
+  roomId: text("room_id").notNull(),
+  // Released fixture or points-format roster. Moving a fixture cannot create a second attempt.
+  contextId: text("context_id").notNull(),
+  teamId: uuid("team_id").notNull(),
+  roundId: text("round_id").notNull(),
+  questionKey: text("question_key").notNull(),
+  points: integer("points").notNull(),
+  status: scoreStatus("status").notNull().default("pending"),
+  judgeUserId: integer("judge_user_id").notNull().references(() => users.id),
+  reviewerUserId: integer("reviewer_user_id").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  clientRequestId: uuid("client_request_id").notNull(),
+  revision: integer("revision").notNull().default(1),
+  correctionOf: uuid("correction_of"),
+  reason: text("reason"),
+  createdAt: createdAt(),
+}, (t) => {
+  const attempt = [t.tournamentId, t.contextId, t.teamId, t.roundId, t.questionKey] as const;
+  return [
+    foreignKey({ name: "score_team_in_tournament", columns: [t.tournamentId, t.teamId], foreignColumns: [teams.tournamentId, teams.id] }),
+    uniqueIndex("score_request_unique").on(t.tournamentId, t.judgeUserId, t.clientRequestId),
+    uniqueIndex("score_attempt_revision").on(...attempt, t.revision),
+    uniqueIndex("score_attempt_pending").on(...attempt).where(sql`${t.status} = 'pending'`),
+    uniqueIndex("score_attempt_approved").on(...attempt).where(sql`${t.status} = 'approved'`),
+    uniqueIndex("score_revision_target").on(t.id, t.roomId, ...attempt),
+    foreignKey({ name: "score_correction_same_attempt", columns: [t.correctionOf, t.roomId, ...attempt], foreignColumns: [t.id, t.roomId, ...attempt] }),
+    index("score_room_status_time").on(t.tournamentId, t.roomId, t.status, t.createdAt),
+    check("score_keys_present", sql`btrim(${t.roomId}) <> '' and btrim(${t.contextId}) <> '' and btrim(${t.roundId}) <> '' and btrim(${t.questionKey}) <> ''`),
+    check("score_revision_valid", sql`(${t.revision} = 1 and ${t.correctionOf} is null) or
+      (${t.revision} > 1 and ${t.correctionOf} is not null and ${t.correctionOf} <> ${t.id} and coalesce(btrim(${t.reason}), '') <> '')`),
+    check("score_review_valid", sql`(${t.status} = 'pending' and ${t.reviewerUserId} is null and ${t.reviewedAt} is null) or
+      (${t.status} <> 'pending' and ${t.reviewerUserId} is not null and ${t.reviewerUserId} <> ${t.judgeUserId}
+       and ${t.reviewedAt} is not null and ${t.reviewedAt} >= ${t.createdAt})`),
+    check("score_rejection_reason", sql`${t.status} <> 'rejected' or coalesce(btrim(${t.reason}), '') <> ''`),
+  ];
+});
+
+export const tournamentScoreEvents = pgTable("tournament_score_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  scoreEntryId: uuid("score_entry_id").notNull().references(() => tournamentScoreEntries.id),
+  actorUserId: integer("actor_user_id").notNull().references(() => users.id),
+  eventType: scoreEventType("event_type").notNull(),
+  details: jsonb("details").notNull().default(sql`'{}'::jsonb`),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex("score_event_once").on(t.scoreEntryId, t.eventType),
+  check("score_event_details_object", sql`jsonb_typeof(${t.details}) = 'object'`),
+]);
 
 // Which judge may enter scores for which tournament (was in Supabase app_metadata)
 export const tournamentJudges = pgTable(

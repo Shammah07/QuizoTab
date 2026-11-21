@@ -8,6 +8,13 @@
       "when": 1795023943629,
       "tag": "0000_panoramic_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795258859019,
+      "tag": "0001_dormant_room_scoring",
+      "breakpoints": true
     }
   ]
 }
