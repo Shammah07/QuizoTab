@@ -2,6 +2,7 @@ import { ApiError, body, requireUser, route } from "@/lib/api";
 import { db, transactionDb } from "@/lib/db";
 import { withRoomOwner } from "@/lib/tournament/room-access";
 import { saveRoomPairings } from "@/lib/tournament/room-management";
+import { saveScoringPlan } from "@/lib/tournament/scoring-plan";
 import { hostTournament } from "@/lib/tournament/api-helpers";
 import { configProblem, normalizeConfig, normalizeJudges } from "@/lib/tournament/rules";
 import { deleteTournament, hostView, saveConfig, writeState } from "@/lib/tournament/store";
@@ -28,6 +29,7 @@ export const PATCH = route<Context>(async (request, { params }) => {
       await saveConfig(tx, tournament.id, config);
     }
     if ("pairings" in data) await saveRoomPairings(tx, tournament.id, data.pairings, data.expectedPairings);
+    if ("scoringPlan" in data) await saveScoringPlan(tx, tournament.id, data.scoringPlan);
     if ("judges" in data) await writeState(tx, tournament.id, "judges", normalizeJudges(data.judges));
   });
   return hostView(db(), tournament);

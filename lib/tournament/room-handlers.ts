@@ -3,6 +3,16 @@ import { authenticated, requireActiveAssignment } from "./room-access";
 import type { Session } from "@/lib/auth/session";
 import type { Db } from "@/lib/db";
 import { changeRoom, listRoomSetup } from "./room-management";
+import { submitRoomScore } from "./room-scoring";
+
+export function scoreSubmissionHandler(database: () => Db, session: () => Promise<Session | null>) {
+  return route<{ params: Promise<{ id: string; roomId: string }> }>(async (request, { params }) => {
+    const actor = authenticated(await session());
+    const { id, roomId } = await params;
+    const { created, ...receipt } = await submitRoomScore(database(), id, roomId, actor, await body(request));
+    return Response.json(receipt, { status: created ? 201 : 200, headers: { "Cache-Control": "no-store" } });
+  });
+}
 
 type Context = { params: Promise<{ id: string }> };
 // Staff can confirm their own assignment during setup, independently of score entry.

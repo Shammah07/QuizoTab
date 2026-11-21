@@ -72,6 +72,44 @@ Owner room commands carry the revision returned by `GET /api/host/tournaments/[i
 
 The staff assignment endpoint returns only the signed-in account's requested room and role. Scoring callers must use the engine-gated judge/host helpers inside their write transaction. The existing Neon HTTP client serves unrelated operations. Interactive room mutations use the Neon pooled adapter. Rehearse independent-connection locking on a separately approved development database before opening pilot scoring.
 
+## Unit 3 submission contract (dormant)
+
+`POST /api/tournaments/[id]/rooms/[roomId]/scores` accepts exactly
+`{contextId, teamId, roundId, questionKey, points, clientRequestId}`.
+Keep the UUID request ID across retries. An insert returns 201 and an exact
+retry returns 200 with the same `{scoreId, status: "pending"}` receipt.
+Authorization and the engine gate are checked on every request, including retries.
+The service locks the tournament before checking the assignment, current release,
+team membership, question limits and available round points. The score and its
+submitted event commit together. The legacy-only database constraint keeps the
+route dormant.
+
+The existing owner tournament PATCH accepts an optional `scoringPlan` document:
+
+```json
+{
+  "rounds": [
+    {"id": "existing-round-id", "questions": [{"id": "q-a", "minPoints": 0, "maxPoints": 3}]}
+  ],
+  "rosters": []
+}
+```
+
+Question IDs are stable within the round and independent of display order.
+Set the combined question minima and maxima within the configured round range.
+For draws, the context ID is the existing released pairing ID. For quiz night
+and league, each roster supplies its own stable `id`, `roomId`, `roundId`,
+`teamIds` and explicit boolean `released`. One team can join one released
+roster per round. The document is stored under a separate tournament-state key.
+The public and legacy state readers do not include it.
+
+The regular test suite exercises the API and concurrent requests in PGlite.
+For the opt-in Neon test, run `npm run db:verify:dev` followed by
+`npm run test:score-submissions:dev`. It verifies both live connections,
+journal hashes and the enforced gate before opening rollback-only fixtures.
+Only the test adapter substitutes the engine read for a synthetic tournament
+to exercise the post-gate path. Application code has no activation override.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

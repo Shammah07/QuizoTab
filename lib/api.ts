@@ -35,7 +35,8 @@ export function route<Context>(handler: (request: NextRequest, context: Context)
   return async (request: NextRequest, context: Context) => {
     try {
       if (fromOtherSite(request)) throw new ApiError(403, "This request didn't come from QuizoTab.");
-      return json(200, await handler(request, context));
+      const result = await handler(request, context);
+      return result instanceof Response ? result : json(200, result);
     } catch (error) {
       if (error instanceof ApiError) return json(error.status, { error: error.message, ...error.extra });
       // The details go to the server log, never to the visitor
