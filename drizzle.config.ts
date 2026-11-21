@@ -1,12 +1,10 @@
-import { config } from "dotenv";
 import { defineConfig } from "drizzle-kit";
-
-config({ path: ".env.local" });
+import { readDevDatabase } from "./scripts/dev-database";
 
 export default defineConfig({
   schema: "./lib/db/schema.ts",
   out: "./drizzle",
   dialect: "postgresql",
-  // Migrations need a direct connection, not the pooled one
-  dbCredentials: { url: process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL ?? "" },
+  // SQL generation is offline. Every command that needs a connection uses the guard.
+  ...(process.argv[2] === "generate" ? {} : { dbCredentials: { url: readDevDatabase().direct } }),
 });

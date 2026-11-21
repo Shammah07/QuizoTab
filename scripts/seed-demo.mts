@@ -11,7 +11,7 @@
 // Demo logins (password "DemoPass-2026" for both):
 //   demo.host@quizotab.test     "Demo Host"      most of the public quizzes, the live games, the tournaments
 //   demo.school@quizotab.test   "Mwalimu Demo"   the kids and Swahili quizzes, two private quizzes
-import { config } from "dotenv";
+import { readDevDatabase } from "./dev-database";
 import { neon } from "@neondatabase/serverless";
 import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -23,8 +23,6 @@ import { ownQuiz, publicQuiz, saveQuiz, type PublicQuiz } from "@/lib/quiz/quizz
 import { soloAnswer, soloRunByToken, soloStart } from "@/lib/quiz/solo";
 import { hostTournaments, tournamentTeams } from "@/lib/quiz/tournament-link";
 
-config({ path: ".env.local" });
-
 const DEMO_PASSWORD = "DemoPass-2026";
 const DEMO_ACCOUNTS = {
   host: { email: "demo.host@quizotab.test", name: "Demo Host" },
@@ -32,11 +30,7 @@ const DEMO_ACCOUNTS = {
 };
 type Owner = keyof typeof DEMO_ACCOUNTS;
 
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL is missing. Copy .env.example to .env.local and fill it in.");
-  process.exit(1);
-}
-const db: Db = drizzle(neon(process.env.DATABASE_URL), { schema });
+const db: Db = drizzle(neon(readDevDatabase().pooled), { schema });
 // No screens are watching while this runs, so the live-game doorbell has no one to ring
 delete process.env.SUPABASE_URL;
 
