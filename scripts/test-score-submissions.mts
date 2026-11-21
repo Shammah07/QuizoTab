@@ -1,3 +1,5 @@
+import { checkSpectators, checkSpectatorRefresh } from "./spectator-checks";
+import { spectatorView } from "@/lib/tournament/spectator";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
@@ -9,18 +11,19 @@ import * as schema from "@/lib/db/schema";
 import { scoreSubmissionHandler } from "@/lib/tournament/room-handlers";
 import { FORMAT_KEYS } from "@/lib/tournament/rules";
 import { saveScoringPlan } from "@/lib/tournament/scoring-plan";
-import { publicView, writeState } from "@/lib/tournament/store";
+import { writeState } from "@/lib/tournament/store";
 import { scoringFixture, verifyAtomicSubmission } from "./score-submission-fixture";
 import { verifyConcurrentReview, verifyRoomReview } from "./score-review-checks";
 
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
 try {
+  await checkSpectatorRefresh();
   await migrate(db, { migrationsFolder: "./drizzle" });
   for (const format of FORMAT_KEYS) {
     const f = await scoringFixture(db, format);
     const { data, submit, id, judges, plan, pairing } = f;
-    const pub = () => publicView(db, f.tournament);
+    const pub = () => spectatorView(f.adapter, id, "standings");
     const original = await pub();
     await assert.rejects(submit(data, judges[0], "west"), { status: 403 });
     for (const change of [{ teamId: randomUUID() }, { teamId: f.teams[2].id }, { roundId: "missing" },
@@ -59,6 +62,9 @@ try {
     assert.equal((await post(judges[0], data, id, "west")).status, 403);
     const another = await scoringFixture(db, format);
     const { host, approvedId } = await verifyRoomReview(db, another);
+    const spectatorFixture = await scoringFixture(db,format);
+    await verifyRoomReview(db,spectatorFixture);
+    await checkSpectators(db,spectatorFixture);
     await verifyConcurrentReview(db, another, host, approvedId);
     console.log("ok  room review, competing decisions and immutable correction history:", format);
     assert.equal((await post(judges[0], data, another.id)).status, 403);

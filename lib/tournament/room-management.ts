@@ -6,9 +6,11 @@ import { z } from "zod";
 import { ApiError } from "@/lib/api";
 import type { Session } from "@/lib/auth/session";
 import type { Db } from "@/lib/db";
-import { tournamentRoomStaff as staff, tournamentScoreEntries, tournamentState, users } from "@/lib/db/schema";
+import { teams, tournaments, tournamentRoomStaff as staff, tournamentScoreEntries, tournamentState, users } from "@/lib/db/schema";
 import { withRoomOwner } from "./room-access";
-import { normalizePairings, type Room } from "./rules";
+import { officialAwards, officialFixture, roundTotals } from "./official-standings";
+import { readScoringPlan } from "./scoring-plan";
+import { computeStandings, firstKnockoutStage, knockoutStagesFrom, prelimMatches, normalizePairings, type Pairing, type Room } from "./rules";
 import { readState, storedRooms, writeState } from "./store";
 
 const roomId = z.string().min(1).max(80);
@@ -40,12 +42,54 @@ export function listRoomSetup(db: Db, id: string, session: Session | null) {
 }
 
 export async function saveRoomPairings(tx: Db, id: string, proposed: unknown, expected: unknown) {
-  const { pairings } = await readState(tx, id);
+  const { pairings, config } = await readState(tx, id);
   if (!isDeepStrictEqual(pairings, expected)) throw new ApiError(409, "The draw changed. Refresh before saving.");
   if (!Array.isArray(proposed)) throw new ApiError(400, "Invalid draw.");
   const rooms = await storedRooms(tx, id);
   const next = normalizePairings(proposed);
   if (next.some(p => p.roomId && !rooms.some(r => r.id === p.roomId))) throw new ApiError(409, "A selected room no longer exists.");
+  const [source] = await tx.select({ engine: tournaments.scoringEngineVersion }).from(tournaments).where(eq(tournaments.id,id));
+  if (source.engine === "room_v1") {
+    const used = await tx.selectDistinct({ contextId: tournamentScoreEntries.contextId }).from(tournamentScoreEntries)
+      .where(eq(tournamentScoreEntries.tournamentId,id));
+    for (const { contextId } of used) {
+      const before = pairings.find(p => p.id === contextId);
+      const after = next.find(p => p.id === contextId);
+      if (before && (!after || before.stage !== after.stage || before.matchLabel !== after.matchLabel ||
+          before.roomId !== after.roomId || before.teamAId !== after.teamAId || before.teamBId !== after.teamBId)) {
+        throw new ApiError(409,"Keep the original participants, room and stage of a scored fixture.");
+      }
+    }
+    const [doc] = await tx.select({ value: tournamentState.value }).from(tournamentState)
+      .where(and(eq(tournamentState.tournamentId,id),eq(tournamentState.key,"scoringPlan")));
+    const plan = readScoringPlan(doc?.value);
+    const awards = await officialAwards(tx,id);
+    const registered = await tx.select({ id: teams.id, name: teams.name }).from(teams).where(eq(teams.tournamentId,id));
+    const prelim = config.format === "championship" ? prelimMatches(config) : [];
+    const stages = knockoutStagesFrom(firstKnockoutStage(config.format === "championship" ? config.qualificationCount : registered.length));
+    const groups: string[] = [...prelim,...stages];
+    const group = (p: Pairing) => p.stage === "preliminary" ? p.matchLabel ?? "" : p.stage;
+    const refuse = () => { throw new ApiError(409,"Complete and release the prerequisite fixtures before advancing eligible teams."); };
+    if (next.some(p => !groups.includes(group(p))) || new Set(next.map(p => p.id)).size !== next.length) refuse();
+    const last = Math.max(...next.map(p => groups.indexOf(group(p))));
+    let eligible = registered.map(t => t.id);
+    for (let i=0; i<=last; i++) {
+      const fixtures = next.filter(p => group(p) === groups[i]);
+      if (i === prelim.length && prelim.length) eligible = computeStandings(registered,roundTotals(awards),
+        config.rounds.filter(r => r.stage === "preliminary")).slice(0,config.qualificationCount).map(t => t.id);
+      const entrants = fixtures.flatMap(p => [p.teamAId,p.teamBId]).filter((id): id is string => !!id);
+      if (new Set(entrants).size !== entrants.length || entrants.some(id => !eligible.includes(id))) refuse();
+      if (i === last) break;
+      if (!fixtures.length || fixtures.length !== Math.ceil(eligible.length/2) || entrants.length !== eligible.length ||
+          !isDeepStrictEqual(fixtures,pairings.filter(p => group(p) === groups[i]))) refuse();
+      const results = fixtures.map(p => officialFixture(p,config,plan,awards));
+      if (results.some(r => !r.complete)) refuse();
+      if (i >= prelim.length) {
+        eligible = results.flatMap(r => r.winnerId ? [r.winnerId] : []);
+        if (eligible.length !== results.length) refuse();
+      }
+    }
+  }
   await writeState(tx, id, "pairings", next);
 }
 

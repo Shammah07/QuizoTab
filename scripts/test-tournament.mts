@@ -1,3 +1,4 @@
+import { listedTournaments, spectatorView } from "@/lib/tournament/spectator";
 // Checks the tournament backend (create, teams, scores and approval, judges, sharing, the pairing
 // engine, and live quiz scores flowing into a round) against a throwaway Postgres that runs inside
 // this script, with the real migrations applied. Run with: npm test
@@ -41,7 +42,6 @@ import {
   loadTeams,
   newGuestCode,
   ownTournament,
-  publicView,
   readState,
   removeJudge,
   resetTournament,
@@ -160,8 +160,8 @@ await check("scores: judges' entries wait for approval, the host's count at once
 
   // Only the host approves or removes
   assert.equal(error(await applyScoreOp(db, tournamentId, { op: "approve-round", roundId: round.id, approved: true }, { name: "Neema", isHost: false })), "Only the host can approve or remove scores.");
-  const pub = await publicView(db, tournamentId ? (await ownTournament(db, tournamentId, asha.id))! : null!);
-  assert.deepEqual(pub.scores.map((s) => s.teamId), [teamIds.Mzumbe]);
+  const pub = await spectatorView(db, tournamentId, "standings");
+  assert.deepEqual(pub.tables[0].rows.filter(row => row.total > 0).map(row => row.total), [70]);
 
   const approved = value(await applyScoreOp(db, tournamentId, { op: "approve-round", roundId: round.id, approved: true }, { name: "Asha", isHost: true }));
   assert.ok(approved.every((s) => s.approved));
@@ -254,11 +254,11 @@ await check("judges: a login tied to the tournament, removed when it judges noth
   await deleteTournament(db, second.id, asha.id);
 });
 
-await check("sharing: a guest code per tournament, found only once the tournament is listed", async () => {
+await check("sharing: an unlisted link or current guest code permits shared views", async () => {
   const code = await guestCodeFor(db, tournamentId);
   assert.match(code, /^[A-HJ-NP-Z2-9]{6}$/);
   assert.equal(await guestCodeFor(db, tournamentId), code);
-  assert.equal(await tournamentForGuestCode(db, code), null);
+  assert.equal((await tournamentForGuestCode(db, code))?.tournament.id, tournamentId);
 
   assert.equal(error(await saveSharing(db, tournamentId, { listed: true, showStandings: false, showDraw: false })), "Share at least the standings or the draw.");
   const sharing = value(await saveSharing(db, tournamentId, { listed: true, showStandings: true, showDraw: false, about: "Six schools." }));
@@ -267,10 +267,23 @@ await check("sharing: a guest code per tournament, found only once the tournamen
   assert.equal(found?.tournament.id, tournamentId);
   assert.equal(found?.sharing.about, "Six schools.");
 
+  assert.ok((await listedTournaments(db)).some(t => t.code === code));
+  await assert.rejects(spectatorView(db,code,"draw"), {status:404});
+  const shared = await spectatorView(db,code,"standings");
+  assert.deepEqual(shared.fixtures,[]);
+  assert.ok(!JSON.stringify(shared).includes(tournamentId));
   const fresh = await newGuestCode(db, tournamentId);
   assert.notEqual(fresh, code);
+  await assert.rejects(spectatorView(db,code),{status:404});
+  await saveSharing(db,tournamentId,{listed:false,showStandings:false,showDraw:true});
+  assert.ok(!(await listedTournaments(db)).some(t => t.code===fresh));
+  await assert.rejects(spectatorView(db,fresh,"standings"),{status:404});
+  assert.deepEqual((await spectatorView(db,fresh,"draw")).tables,[]);
   assert.equal(await tournamentForGuestCode(db, code), null);
   assert.equal((await tournamentForGuestCode(db, fresh))?.tournament.id, tournamentId);
+  await saveSharing(db,tournamentId,{listed:false,showStandings:false,showDraw:false});
+  for (const key of [fresh,tournamentId]) await assert.rejects(spectatorView(db,key),{status:404});
+  value(await saveSharing(db,tournamentId,{...sharing}));
 });
 
 await check("a live quiz's results land in the round, waiting for approval", async () => {

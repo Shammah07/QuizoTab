@@ -1,5 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, notExists, or, sql } from "drizzle-orm";
+import { readScoringPlan } from "./scoring-plan";
+import { officialAwards, officialFixture, roundTotals } from "./official-standings";
 import { z } from "zod";
 import { ApiError } from "@/lib/api";
 import { hashPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth/password";
@@ -310,16 +312,16 @@ export async function applyScoreOp(db: Db, tournamentId: string, input: Record<s
     if (!Number.isFinite(points) || points < min || points > max) return fail(400, `Points for this round must be between ${min} and ${max}.`);
     const existing = scores.find((s) => s.teamId === teamId && s.roundId === roundId);
     // The host's own entries count straight away; a judge's wait for approval
-    const entry: Score = { id: existing?.id ?? uid(), teamId, roundId, points, judgeName: who.name.slice(0, 120), enteredAt: new Date().toISOString(), approved: who.isHost };
+    const entry: Score = { id: existing?.id ?? uid(), teamId, roundId, points, judgeName: who.name.slice(0, 120), enteredAt: new Date().toISOString(), ...(who.isHost ? { approvedAt: new Date().toISOString() } : {}), approved: who.isHost };
     next = existing ? scores.map((s) => (s.id === existing.id ? entry : s)) : [...scores, entry];
   } else if (!who.isHost) {
     return fail(403, "Only the host can approve or remove scores.");
   } else if (input.op === "approve-round") {
     const roundId = String(input.roundId ?? "");
-    next = scores.map((s) => (s.roundId === roundId ? { ...s, approved: input.approved === true } : s));
+    next = scores.map((s) => (s.roundId === roundId ? { ...s, approved: input.approved === true, approvedAt: input.approved === true ? (s.approved ? s.approvedAt : new Date().toISOString()) : undefined } : s));
   } else if (input.op === "approve") {
     const scoreId = String(input.scoreId ?? "");
-    next = scores.map((s) => (s.id === scoreId ? { ...s, approved: input.approved === true } : s));
+    next = scores.map((s) => (s.id === scoreId ? { ...s, approved: input.approved === true, approvedAt: input.approved === true ? (s.approved ? s.approvedAt : new Date().toISOString()) : undefined } : s));
   } else if (input.op === "delete") {
     const scoreId = String(input.scoreId ?? "");
     next = scores.filter((s) => s.id !== scoreId);
@@ -424,7 +426,7 @@ export async function newGuestCode(db: Db, tournamentId: string) {
     const [saved] = await db
       .insert(guestCodes)
       .values({ tournamentId, code, codeKey: guestCodeKey(code) })
-      .onConflictDoUpdate({ target: guestCodes.tournamentId, set: { code, codeKey: guestCodeKey(code), createdAt: sql`now()` } })
+      .onConflictDoUpdate({ target: guestCodes.tournamentId, setWhere: sql`${guestCodes.code} <> ${code}`, set: { code, codeKey: guestCodeKey(code), createdAt: sql`now()` } })
       .returning({ code: guestCodes.code });
     if (saved) return saved.code;
   }
@@ -433,7 +435,7 @@ export async function newGuestCode(db: Db, tournamentId: string) {
 
 export async function saveSharing(db: Db, tournamentId: string, input: Record<string, unknown>): Promise<Result<Sharing>> {
   const sharing = normalizeSharing({ ...input, showStandings: input.showStandings === true, showDraw: input.showDraw === true });
-  if (!sharing.showStandings && !sharing.showDraw) return fail(400, "Share at least the standings or the draw.");
+  if (sharing.listed && !sharing.showStandings && !sharing.showDraw) return fail(400, "Share at least the standings or the draw.");
   await writeState(db, tournamentId, "sharing", sharing);
   return { ok: true, value: sharing };
 }
@@ -448,7 +450,7 @@ export async function tournamentForGuestCode(db: Db, code: string) {
   const tournament = await tournamentById(db, found.tournamentId);
   if (!tournament) return null;
   const { sharing } = await readState(db, found.tournamentId);
-  return sharing.listed ? { tournament, sharing } : null;
+  return sharing.showStandings || sharing.showDraw ? { tournament, sharing } : null;
 }
 
 // ---------- Whole views ----------
@@ -463,7 +465,13 @@ export async function resetTournament(db: Db, tournamentId: string) {
 // Everything the host's dashboard shows
 export async function hostView(db: Db, tournament: TournamentRow) {
   const [state, teamList, code] = await Promise.all([readState(db, tournament.id), loadTeams(db, tournament.id), guestCodeFor(db, tournament.id)]);
-  return { tournament, ...state, teams: teamList, code };
+  const [source] = await db.select({ engine: tournaments.scoringEngineVersion }).from(tournaments).where(eq(tournaments.id,tournament.id));
+  const awards = source.engine === "room_v1" ? await officialAwards(db,tournament.id) : null;
+  const [doc] = awards ? await db.select({ value: tournamentState.value }).from(tournamentState)
+    .where(and(eq(tournamentState.tournamentId,tournament.id),eq(tournamentState.key,"scoringPlan"))) : [];
+  const plan = readScoringPlan(doc?.value);
+  const fixtureResults = awards ? Object.fromEntries(state.pairings.map(p => [p.id,officialFixture(p,state.config,plan,awards)])) : null;
+  return { tournament, ...state, teams: teamList, code, roomAwards: awards && roundTotals(awards), fixtureResults };
 }
 
 // What a judge sees: the rules, teams, scores and the draw, never the sharing settings or guest code
@@ -472,31 +480,18 @@ export async function judgeView(db: Db, tournament: TournamentRow) {
   return { tournament, config: state.config, teams: teamList, scores: state.scores, pairings: state.pairings };
 }
 
-// What the audience sees: approved scores, released pairings, and judges by name only
-export async function publicView(db: Db, tournament: TournamentRow) {
-  const [state, teamList] = await Promise.all([readState(db, tournament.id), loadTeams(db, tournament.id)]);
-  return {
-    tournament,
-    config: state.config,
-    teams: teamList,
-    scores: state.scores.filter((s) => s.approved),
-    pairings: state.pairings.filter((p) => p.released),
-    rooms: state.rooms,
-    judges: state.judges.map((j) => ({ id: j.id, name: j.name })),
-    sharing: state.sharing,
-  };
-}
-
 export type HostView = Awaited<ReturnType<typeof hostView>>;
 export type JudgeView = Awaited<ReturnType<typeof judgeView>>;
-export type PublicView = Awaited<ReturnType<typeof publicView>>;
 
 // The host's tournaments for the home page leaderboard: the preliminary (or every) round's approved totals
 export async function standingsSummary(db: Db, ownerId: number) {
   const list = (await listOwnTournaments(db, ownerId)).slice(0, 5);
   const out = [];
   for (const tournament of list) {
-    const view = await publicView(db, tournament);
+    const state = await readState(db, tournament.id);
+    const [source] = await db.select({ engine: tournaments.scoringEngineVersion }).from(tournaments).where(eq(tournaments.id,tournament.id));
+    const view = { config: state.config, teams: await loadTeams(db,tournament.id), scores: source.engine === "room_v1"
+      ? roundTotals(await officialAwards(db,tournament.id)) : state.scores.filter(s => s.approved) };
     const rounds = view.config.format === "championship" ? view.config.rounds.filter((r) => r.stage === "preliminary") : view.config.rounds;
     const ids = new Set(rounds.map((r) => r.id));
     const totals = new Map<string, number>();

@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/api";
 import type { Db } from "@/lib/db";
 import { teams, tournamentScoreEntries, tournamentState } from "@/lib/db/schema";
 import { isPointsFormat, normalizeConfig, normalizePairings, roundRange, stageRoundsFor, type TournamentConfig } from "./rules";
+import { officialAwards, officialFixture } from "./official-standings";
 import { readState, storedRooms } from "./store";
 
 const key = z.string().trim().min(1).max(80);
@@ -14,10 +15,16 @@ const roster = z.strictObject({
   id: key, roomId: key, roundId: key, released: z.boolean(), teamIds: z.array(z.uuid()).min(1).max(2000),
 });
 const planSchema = z.strictObject({
+  completedContexts: z.array(key).max(2000).optional(),
   rounds: z.array(z.strictObject({ id: key, questions: z.array(question).min(1).max(500) })).min(1).max(500),
   rosters: z.array(roster).max(2000),
 });
 type Plan = z.infer<typeof planSchema>;
+
+export function readScoringPlan(value: unknown) {
+  const result = planSchema.safeParse(value);
+  return result.success ? result.data : { rounds: [], rosters: [], completedContexts: [] };
+}
 
 function unique(ids: string[]) {
   return new Set(ids).size === ids.length;
@@ -36,12 +43,19 @@ export async function saveScoringPlan(tx: Db, id: string, input: unknown) {
   const parsed = planSchema.safeParse(input);
   if (!parsed.success) throw new ApiError(400, "Invalid scoring plan.");
   const plan = parsed.data;
-  const { config } = await readState(tx, id);
+  const { config, pairings } = await readState(tx, id);
   if (!unique(plan.rounds.map(r => r.id)) || !plan.rounds.every(r => validRound(config, r))) {
     throw new ApiError(422, "Check round IDs, question IDs and point limits.");
   }
   if (!unique(plan.rosters.map(r => r.id)) || (plan.rosters.length && !isPointsFormat(config))) {
     throw new ApiError(422, "Room rosters require a points-format tournament and distinct IDs.");
+  }
+  if (plan.completedContexts?.length) {
+    const awards = await officialAwards(tx,id);
+    if (!unique(plan.completedContexts) || !plan.completedContexts.every(key => {
+      const fixture = pairings.find(p => p.id === key);
+      return fixture && officialFixture(fixture,config,plan,awards).complete;
+    })) throw new ApiError(409,"Only released fixtures with full approved question coverage or a bye can be marked complete.");
   }
   const roomIds = new Set((await storedRooms(tx, id)).map(r => r.id));
   const teamIds = new Set((await tx.select({ id: teams.id }).from(teams).where(eq(teams.tournamentId, id))).map(t => t.id));

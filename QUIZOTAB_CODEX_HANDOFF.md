@@ -129,6 +129,12 @@ entry retain the proposal reason; the rejected event retains the rejection reaso
 Round capacity reserves the larger pending/approved value per attempt. None
 of these operations writes to the legacy scores document or spectator response.
 
+## Milestone 1 Unit 5 — official standings and spectator access
+
+The audience directory and guest-code entry are at `/host/t`. Existing UUID links remain bearer links. Code-based pages keep the code in subsequent requests so rotation revokes that access. Disable both sections on an unlisted tournament to revoke all spectator access. Paired room standings require draw sharing because the room roster reveals opponents.
+
+The SSR pages and six-second refresh use the same read-only repeatable-read projection. Legacy tournaments use approved JSON scores. Room scoring uses only the effective approved revision per attempt. A released fixture needs an owner-set `completedContexts` marker in the scoring plan and approved coverage for every planned question and participant. A released bye can be explicitly closed. The server checks prerequisite stages and eligible entrants before saving a subsequent draw. The existing database constraint still permits only legacy tournaments. Older legacy approvals have no reliable approval timestamp.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

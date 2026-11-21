@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { CheckCircle2, Circle } from "lucide-react";
 import { useState } from "react";
 import { Alert } from "@/components/ui/alert";
@@ -52,7 +53,7 @@ export function SharePanel({ sharing: saved, code, audienceUrl, onSave, onNewCod
       {error && <Alert type="error">{error}</Alert>}
       {notice && <Alert type="success">{notice}</Alert>}
 
-      <LinkBox label="Audience link" href={audienceUrl} hint="Anyone with this link can watch the standings and the released draw. No sign-in needed." />
+      <LinkBox label="Audience link" href={audienceUrl} hint="This link opens the sections you share. To disable spectator access, unlist the tournament and turn off both sections." />
 
       <div className={cn(panelClass, "p-6 text-center")}>
         <p className="text-sm text-muted">Guest code</p>
@@ -61,6 +62,7 @@ export function SharePanel({ sharing: saved, code, audienceUrl, onSave, onNewCod
           {draft.listed ? "This code is shown next to your tournament in QuizoTab's public list, so guests can copy it and watch." : "Share this code with people you want to watch. Once you list the tournament, it's also shown publicly."}
         </p>
         <div className="flex flex-wrap justify-center gap-2">
+          <Link className="underline" href="/host/t">Guest code entry</Link>
           <CopyButton text={code} label="Copy code" variant="neon" />
           <Button variant="line" size="sm" onClick={newCode}>
             New code

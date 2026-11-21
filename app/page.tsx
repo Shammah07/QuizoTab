@@ -224,6 +224,7 @@ export default async function HomePage() {
               </p>
               <div className="flex flex-wrap gap-3">
                 <ButtonLink href={`mailto:${contact.email}?subject=Question%20about%20QuizoTab`}>{t("Email us")}</ButtonLink>
+                <ButtonLink href="/host/t" variant="line">{t("Watch a tournament")}</ButtonLink>
                 <ButtonLink href="/host" variant="line">
                   {t("Host a tournament")}
                 </ButtonLink>

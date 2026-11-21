@@ -1,9 +1,8 @@
 import { route } from "@/lib/api";
-import { db } from "@/lib/db";
-import { anyTournament } from "@/lib/tournament/api-helpers";
-import { publicView } from "@/lib/tournament/store";
+import { transactionDb } from "@/lib/db";
+import { spectatorView } from "@/lib/tournament/spectator";
 
-// What the audience sees: the rules, teams, approved scores and released pairings. Open to everyone.
-export const GET = route<RouteContext<"/api/tournaments/[id]">>(async (_, { params }) => {
-  return publicView(db(), await anyTournament(db(), (await params).id));
+export const GET = route<RouteContext<"/api/tournaments/[id]">>(async (request, { params }) => {
+  const query = request.nextUrl.searchParams;
+  return spectatorView(transactionDb(), (await params).id, query.get("section") ?? "overview", query.get("room") ?? undefined);
 });

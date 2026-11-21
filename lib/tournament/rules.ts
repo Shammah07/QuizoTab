@@ -85,6 +85,7 @@ export type Score = {
   points: number;
   judgeName: string;
   enteredAt: string;
+  approvedAt?: string;
   // Only approved scores count in the public standings
   approved: boolean;
 };
@@ -362,6 +363,7 @@ export function normalizeScores(input: unknown): Score[] {
       points: Number(s.points) || 0,
       judgeName: str(s.judgeName, 120),
       enteredAt: str(s.enteredAt, 40),
+      ...(s.approvedAt ? { approvedAt: str(s.approvedAt, 40) } : {}),
       approved: s.approved === true,
     }))
     .filter((s) => s.teamId && s.roundId);
@@ -420,7 +422,8 @@ export function preliminaryScoresApproved(config: TournamentConfig, scores: Scor
 
 export type Standing = Team & { byRound: Record<string, number>; total: number };
 
-export function computeStandings(teams: Team[], scores: Score[], rounds: Round[]): Standing[] {
+export type Award = Pick<Score, "teamId" | "roundId" | "points">;
+export function computeStandings<T extends Pick<Team, "id" | "name">>(teams: T[], scores: Award[], rounds: Round[]) {
   const roundIds = new Set(rounds.map((r) => r.id));
   return teams
     .map((team) => {
@@ -470,14 +473,14 @@ export function currentPairings(pairings: Pairing[], releasedOnly = false) {
 
 export const releasedRounds = (config: TournamentConfig, pairings: Pairing[]) => roundsForPairings(config, pairings, true);
 
-export function teamPointsIn(teamId: string, rounds: Round[], scores: Score[]) {
+export function teamPointsIn(teamId: string, rounds: Round[], scores: Award[]) {
   const ids = new Set(rounds.map((r) => r.id));
   return scores.filter((s) => s.teamId === teamId && ids.has(s.roundId)).reduce((sum, s) => sum + s.points, 0);
 }
 
 // Winner of a paired match: whoever scored more across that match's rounds. A tie defers to the
 // recorded Category of Choice tiebreak (pairing.tiebreakWinnerId) rather than guessing.
-export function matchWinnerDetail(pairing: Pairing, config: TournamentConfig, scores: Score[]) {
+export function matchWinnerDetail(pairing: Pairing, config: TournamentConfig, scores: Award[]) {
   if (!pairing.teamAId || !pairing.teamBId) return { winnerId: pairing.teamAId || pairing.teamBId || null, viaTiebreak: false }; // a bye
   const rounds = stageRoundsFor(config, pairing.stage, pairing.matchLabel);
   const a = teamPointsIn(pairing.teamAId, rounds, scores);
@@ -486,10 +489,10 @@ export function matchWinnerDetail(pairing: Pairing, config: TournamentConfig, sc
   return { winnerId: a > b ? pairing.teamAId : pairing.teamBId, viaTiebreak: false };
 }
 
-export const matchWinner = (pairing: Pairing, config: TournamentConfig, scores: Score[]) => matchWinnerDetail(pairing, config, scores).winnerId;
+export const matchWinner = (pairing: Pairing, config: TournamentConfig, scores: Award[]) => matchWinnerDetail(pairing, config, scores).winnerId;
 
 // A knockout match tied on points, with at least one score entered and no tiebreak recorded yet
-export function isTiedNeedingBreak(pairing: Pairing, config: TournamentConfig, scores: Score[]) {
+export function isTiedNeedingBreak(pairing: Pairing, config: TournamentConfig, scores: Award[]) {
   if (!pairing.teamAId || !pairing.teamBId || pairing.tiebreakWinnerId) return false;
   const rounds = stageRoundsFor(config, pairing.stage, pairing.matchLabel);
   const ids = new Set(rounds.map((r) => r.id));
@@ -524,7 +527,7 @@ export function generateMatch1Pairings(teams: Team[], matchLabel = "Match 1"): P
 
 // Later matches: pair by cumulative standing, walking forward from each unpaired team to the
 // nearest standing they haven't already faced (the "one-up-one-down" swap of a controlled Swiss system)
-export function generateSwissPairings(matchLabel: string, teams: Team[], config: TournamentConfig, scores: Score[], existing: Pairing[]): Pairing[] {
+export function generateSwissPairings(matchLabel: string, teams: Team[], config: TournamentConfig, scores: Award[], existing: Pairing[]): Pairing[] {
   const order = prelimMatches(config);
   const priorMatches = order.slice(0, order.indexOf(matchLabel));
   const priorRounds = priorMatches.flatMap((m) => stageRoundsFor(config, "preliminary", m));
@@ -572,7 +575,7 @@ export function generateFoldPairingsForStage(seeded: Array<Team | null>, stage: 
   }));
 }
 
-export function preliminarySeedOrder(teams: Team[], config: TournamentConfig, scores: Score[]) {
+export function preliminarySeedOrder(teams: Team[], config: TournamentConfig, scores: Award[]) {
   const prelimRounds = config.rounds.filter((r) => r.stage === "preliminary");
   return computeStandings(teams, scores, prelimRounds).slice(0, config.qualificationCount || 8);
 }
@@ -586,7 +589,7 @@ export function teamsForCurrentPairingStage(teams: Team[], pairings: Pairing[]) 
 }
 
 // Championship: the top qualifiers from the preliminaries start the knockouts, best seed against worst
-export function generateFirstKnockout(teams: Team[], config: TournamentConfig, scores: Score[]) {
+export function generateFirstKnockout(teams: Team[], config: TournamentConfig, scores: Award[]) {
   const top = preliminarySeedOrder(teams, config, scores);
   const stage = firstKnockoutStage(config.qualificationCount || 8);
   return generateFoldPairingsForStage(top, stage, knockoutLabels(stage, Math.ceil(top.length / 2)));
@@ -610,7 +613,7 @@ export function knockoutSeedOrder(teams: Team[], pairings: Pairing[], firstStage
 }
 
 // Advances the winners of one knockout stage, keeping their seed order, and re-seeds them fold-style
-export function advanceKnockout(fromStage: KnockoutStage, toStage: KnockoutStage, seedOrder: Team[], config: TournamentConfig, scores: Score[], pairings: Pairing[]) {
+export function advanceKnockout(fromStage: KnockoutStage, toStage: KnockoutStage, seedOrder: Team[], config: TournamentConfig, scores: Award[], pairings: Pairing[]) {
   const winnerIds = pairings
     .filter((p) => p.stage === fromStage)
     .map((p) => matchWinner(p, config, scores))

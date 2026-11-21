@@ -24,7 +24,7 @@ import {
   type Judge,
   type Pairing,
   type Room,
-  type Score,
+  type Award,
   type Stage,
   type Team,
   type TournamentConfig,
@@ -37,7 +37,8 @@ import { ConfirmButton, fieldClass, iconButtonClass, panelClass } from "./bits";
 type Props = {
   config: TournamentConfig;
   teams: Team[];
-  scores: Score[];
+  scores: Award[];
+  fixtureResults: Record<string,{ complete: boolean; winnerId: string | null; viaTiebreak: boolean }> | null;
   pairings: Pairing[];
   rooms: Room[];
   judges: Judge[];
@@ -47,7 +48,7 @@ type Props = {
 
 type Section = { stage: Stage; matchLabel: string | null; label: string; ready: boolean; note: string; generate: () => Pairing[] };
 
-export function PairingsPanel({ config, teams, scores, pairings, rooms, judges, onPairingsChange, onConfigChange }: Props) {
+export function PairingsPanel({ config, teams, scores, fixtureResults, pairings, rooms, judges, onPairingsChange, onConfigChange }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const format = formatOf(config);
@@ -177,8 +178,8 @@ export function PairingsPanel({ config, teams, scores, pairings, rooms, judges, 
               <ul className="flex flex-col gap-2">
                 {rows.map((p) => {
                   const knockout = section.stage !== "preliminary";
-                  const detail = knockout ? matchWinnerDetail(p, config, scores) : { winnerId: null, viaTiebreak: false };
-                  const tied = knockout && isTiedNeedingBreak(p, config, scores);
+                  const detail = knockout ? (fixtureResults?.[p.id] ?? matchWinnerDetail(p, config, scores)) : { winnerId: null, viaTiebreak: false };
+                  const tied = knockout && (!fixtureResults || fixtureResults[p.id]?.complete) && isTiedNeedingBreak(p, config, scores);
                   const option = (team: Team) => (
                     <option key={team.id} value={team.id}>
                       {team.name}

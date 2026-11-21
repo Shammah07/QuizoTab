@@ -1,3 +1,4 @@
+import { spectatorView } from "@/lib/tournament/spectator";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
@@ -14,7 +15,10 @@ type Fixture = Awaited<ReturnType<typeof scoringFixture>>;
 
 export async function verifyRoomReview(db: Db, f: Fixture) {
   const { id, adapter, judges } = f;
+  const standings = () => spectatorView(adapter,id,"standings","hall");
+  const total = async () => (await standings()).tables[0].rows.find(r => r.name === "A")?.total;
   const pending = await f.submit();
+  assert.equal(await total(),0);
   const scoreId = pending.scoreId;
   const [owner] = await db.select({ userId: s.tournaments.ownerId }).from(s.tournaments).where(eq(s.tournaments.id, id));
   const [account] = await db.insert(s.users).values({ name: "Review host", email: randomUUID() + "@example.test", password: "unusable" })
@@ -81,10 +85,13 @@ export async function verifyRoomReview(db: Db, f: Fixture) {
     const extra = await f.submit({ ...f.data, questionKey, points: 3, clientRequestId: randomUUID() });
     await decide({ scoreId: extra.scoreId, decision: "approve" });
   }
+  assert.equal(await total(),8);
+  const beforeCorrection = await standings();
   const proposal = { scoreId, points: 3, reason: "Answer key corrected", clientRequestId: randomUUID() };
   assert.equal((await api("correct", host, proposal)).status, 403);
   const submitted = await api("correct", judges[1], proposal);
   assert.equal(submitted.status, 201);
+  assert.deepEqual(await standings(),beforeCorrection);
   const rejectedId = (await submitted.json()).scoreId;
   assert.equal((await check(rejectedId)).correctionOf, scoreId);
   assert.equal((await check(scoreId)).status, "approved");
@@ -99,6 +106,7 @@ export async function verifyRoomReview(db: Db, f: Fixture) {
   assert.equal((await check(rejectedId)).reason, proposal.reason);
   assert.deepEqual((await audit(rejectedId)).find(e => e.eventType === "rejected")?.details, { reason: rejection });
   assert.equal((await check(scoreId)).status, "approved");
+  assert.deepEqual(await standings(),beforeCorrection);
   const corrected = await proposeCorrection(adapter, id, "hall", judges[1], { ...proposal, clientRequestId: randomUUID() });
   const correctionApproval = { scoreId: corrected.scoreId, decision: "approve" };
   // Fail the second audit insert, after the supersession event and both updates.
@@ -108,6 +116,7 @@ export async function verifyRoomReview(db: Db, f: Fixture) {
   assert.equal((await check(corrected.scoreId)).status, "pending");
   assert.ok(!(await audit(scoreId)).some(e => e.eventType === "superseded"));
   await decide(correctionApproval);
+  assert.equal(await total(),9);
   const superseded = await check(scoreId);
   assert.equal(superseded.status, "superseded");
   assert.equal(superseded.points, first.points);

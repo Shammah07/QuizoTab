@@ -226,7 +226,7 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
 
       {shownTab === "scores" && <ScoresPanel config={config} teams={teams} scores={scores} onChange={scoreOp} />}
 
-      {shownTab === "draw" && usesDraw && <PairingsPanel config={config} teams={teams} scores={scores} pairings={view.pairings} rooms={view.rooms} judges={view.judges} onPairingsChange={(pairings) => patch({ pairings })} onConfigChange={(next) => patch({ config: next })} />}
+      {shownTab === "draw" && usesDraw && <PairingsPanel config={config} teams={teams} scores={view.roomAwards ?? scores.filter(s => s.approved)} fixtureResults={view.fixtureResults} pairings={view.pairings} rooms={view.rooms} judges={view.judges} onPairingsChange={(pairings) => patch({ pairings })} onConfigChange={(next) => patch({ config: next })} />}
 
       {shownTab === "rooms" && <RoomsPanel endpoint={`${base}/rooms`} judges={view.judges} onSaved={load} />}
 

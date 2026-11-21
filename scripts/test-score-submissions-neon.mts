@@ -1,3 +1,4 @@
+import { checkSpectators } from "./spectator-checks";
 // Opt-in only. Roll back the whole fixture, including append-only audit events.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -38,6 +39,7 @@ try {
       fixtureId = fixture.id;
       await verifyAtomicSubmission(tx, fixture);
       await verifyRoomReview(tx, fixture);
+      await checkSpectators(tx,fixture);
       const outside = await independent.select({ id: schema.tournamentScoreEntries.id }).from(schema.tournamentScoreEntries)
         .where(eq(schema.tournamentScoreEntries.tournamentId, fixture.id));
       assert.equal(outside.length, 0);
@@ -45,7 +47,7 @@ try {
     }), error => error === rolledBack);
     assert.equal((await independent.select({ id: schema.tournaments.id }).from(schema.tournaments)
       .where(eq(schema.tournaments.id, fixtureId))).length, 0);
-    console.log("ok  Neon submission, review, correction history, audit rollback and fixture rollback:", format);
+    console.log("ok  Neon submission, review, official standings, room isolation, correction history, audit rollback and fixture rollback:", format);
   }
 } finally {
   await Promise.all([writer.end(), observer.end()]);
