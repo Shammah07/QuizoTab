@@ -1,5 +1,6 @@
 import "server-only";
-import { neon } from "@neondatabase/serverless";
+import { neon, Pool } from "@neondatabase/serverless";
+import { drizzle as drizzlePool } from "drizzle-orm/neon-serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { env } from "@/lib/env";
@@ -24,3 +25,9 @@ export function db(): Db {
 }
 
 export { schema };
+
+let transactionalClient: Db | undefined;
+export function transactionDb(): Db {
+  transactionalClient ??= drizzlePool(new Pool({ connectionString: env("DATABASE_URL") }), { schema });
+  return transactionalClient;
+}

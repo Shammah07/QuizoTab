@@ -64,6 +64,14 @@ Judge assigned Room A can submit Room A score but not Room B. Room B host cannot
 5. Write integration/authorization/concurrency tests. Explain and verify each migration before applying it; never run production migrations or expose `.env` secrets without approval.
 6. For each change: list files changed, tests actually run with results, residual risks, manual verification steps, and rollback steps. Never claim “zero errors” or tested behavior without evidence.
 
+## Implemented room assignment contract (Unit 2)
+
+Owners can prepare account-bound room assignments on the Rooms tab while the database gate keeps scoring on `legacy`. JSON rooms own their stable IDs and display labels. Active relational assignments own permissions. An owner assigns a verified account by exact email. Removing a legacy judge label leaves its separately managed room role intact.
+
+Owner room commands carry the revision returned by `GET /api/host/tournaments/[id]/rooms`. Their transaction locks the tournament row before validating the revision, JSON room IDs, and current assignments. Draw changes that reference rooms use the same lock and compare the expected draw. Future score writes must take a compatible tournament lock before checking room access and recording an entry. A released pairing or any score entry blocks permanent room deletion. Allowed deletion clears draft references and timestamps active assignments as revoked.
+
+The staff assignment endpoint returns only the signed-in account's requested room and role. Scoring callers must use the engine-gated judge/host helpers inside their write transaction. The existing Neon HTTP client serves unrelated operations. Interactive room mutations use the Neon pooled adapter. Rehearse independent-connection locking on a separately approved development database before opening pilot scoring.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

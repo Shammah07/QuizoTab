@@ -1,10 +1,11 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notExists, or, sql } from "drizzle-orm";
 import { z } from "zod";
+import { ApiError } from "@/lib/api";
 import { hashPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth/password";
 import { guestCodeKey, makeGuestCode } from "@/lib/auth/tokens";
 import type { Db } from "@/lib/db";
-import { guestCodes, quizGames, teams, tournamentJudges, tournaments, tournamentState, users } from "@/lib/db/schema";
+import { guestCodes, quizGames, teams, tournamentJudges, tournamentRoomStaff, tournamentScoreEntries, tournamentScoreEvents, tournaments, tournamentState, users } from "@/lib/db/schema";
 import {
   defaultConfig,
   FORMAT_KEYS,
@@ -143,6 +144,9 @@ export async function createTournament(db: Db, ownerId: number, input: Tournamen
 export async function deleteTournament(db: Db, id: string, ownerId: number) {
   const own = await ownTournament(db, id, ownerId);
   if (!own) return false;
+  const [assignment] = await db.select({ id: tournamentRoomStaff.id }).from(tournamentRoomStaff).where(eq(tournamentRoomStaff.tournamentId, id)).limit(1);
+  const [entry] = await db.select({ id: tournamentScoreEntries.id }).from(tournamentScoreEntries).where(eq(tournamentScoreEntries.tournamentId, id)).limit(1);
+  if (assignment || entry) throw new ApiError(409, "This tournament has room staff or scoring history and must be kept.");
   const judgeIds = (await db.select({ userId: tournamentJudges.userId }).from(tournamentJudges).where(eq(tournamentJudges.tournamentId, id))).map((j) => j.userId);
   await db.update(quizGames).set({ tournamentId: null, tournamentLabel: null }).where(eq(quizGames.tournamentId, id));
   // teams, tournament_state, tournament_judges and guest_codes go with it (ON DELETE CASCADE)
@@ -162,6 +166,17 @@ const normalizers: { [K in StateKey]: (input: unknown) => State[K] } = {
   sharing: normalizeSharing,
 };
 
+export async function storedRooms(db: Db, id: string) {
+  const [row] = await db.select({ value: tournamentState.value }).from(tournamentState)
+    .where(and(eq(tournamentState.tournamentId, id), eq(tournamentState.key, "rooms")));
+  const raw = row ? row.value : [];
+  if (!Array.isArray(raw) || raw.length > 200 || raw.some(r => typeof r?.id !== "string" || r.id.length > 80 || !r.id.trim() || r.id !== r.id.trim()) ||
+      new Set(raw.map(r => r.id)).size !== raw.length) {
+    throw new ApiError(409, "Room IDs are missing or duplicated. Review the stored room configuration.");
+  }
+  return normalizeRooms(raw);
+}
+
 export async function readState(db: Db, tournamentId: string): Promise<State> {
   const rows = await db
     .select({ key: tournamentState.key, value: tournamentState.value })
@@ -175,7 +190,10 @@ export async function writeState<K extends StateKey>(db: Db, tournamentId: strin
   await db
     .insert(tournamentState)
     .values({ tournamentId, key, value })
-    .onConflictDoUpdate({ target: [tournamentState.tournamentId, tournamentState.key], set: { value, updatedAt: sql`now()` } });
+    .onConflictDoUpdate({ target: [tournamentState.tournamentId, tournamentState.key], set: {
+      value,
+      updatedAt: key === "rooms" ? sql`greatest(clock_timestamp(), ${tournamentState.updatedAt} + interval '1 microsecond')` : sql`now()`,
+    } });
 }
 
 // The config also carries the name and dates, which the tournament row shows in lists
@@ -363,18 +381,31 @@ export async function addJudge(db: Db, tournamentId: string, input: Record<strin
 
 // A judge login that judges nothing anymore is removed completely
 async function removeJudgeLoginIfIdle(db: Db, userId: number) {
-  const [other] = await db.select({ tournamentId: tournamentJudges.tournamentId }).from(tournamentJudges).where(eq(tournamentJudges.userId, userId)).limit(1);
-  if (!other) await db.delete(users).where(and(eq(users.id, userId), eq(users.role, "judge")));
+  await db.delete(users).where(and(eq(users.id, userId), eq(users.role, "judge"),
+    notExists(db.select().from(tournaments).where(eq(tournaments.ownerId, userId))),
+    notExists(db.select().from(tournamentJudges).where(eq(tournamentJudges.userId, userId))),
+    notExists(db.select().from(tournamentRoomStaff).where(eq(tournamentRoomStaff.userId, userId))),
+    notExists(db.select().from(tournamentScoreEntries).where(or(eq(tournamentScoreEntries.judgeUserId, userId), eq(tournamentScoreEntries.reviewerUserId, userId)))),
+    notExists(db.select().from(tournamentScoreEvents).where(eq(tournamentScoreEvents.actorUserId, userId))),
+  ));
 }
 
 export async function removeJudge(db: Db, tournamentId: string, judgeId: unknown) {
   const id = String(judgeId ?? "");
-  const { judges } = await readState(db, tournamentId);
+  const { judges, rooms } = await readState(db, tournamentId);
   await writeState(db, tournamentId, "judges", judges.filter((j) => j.id !== id));
+  if (rooms.some(r => r.judgeId === id || r.panelistIds.includes(id))) {
+    const validated = await storedRooms(db, tournamentId);
+    await writeState(db, tournamentId, "rooms", validated.map(r => ({
+      ...r, judgeId: r.judgeId === id ? "" : r.judgeId, panelistIds: r.panelistIds.filter(p => p !== id),
+    })));
+  }
   if (!/^\d+$/.test(id)) return; // a name-only judge with no login
   const userId = Number(id);
-  await db.delete(tournamentJudges).where(and(eq(tournamentJudges.tournamentId, tournamentId), eq(tournamentJudges.userId, userId)));
-  await removeJudgeLoginIfIdle(db, userId);
+  // Room roles have an independent assignment lifecycle in the room editor.
+  const removed = await db.delete(tournamentJudges).where(and(eq(tournamentJudges.tournamentId, tournamentId), eq(tournamentJudges.userId, userId)))
+    .returning({ userId: tournamentJudges.userId });
+  if (removed.length) await removeJudgeLoginIfIdle(db, userId);
 }
 
 // ---------- Sharing and guest codes ----------

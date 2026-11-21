@@ -68,7 +68,8 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
 
   // Saves one or more documents; the answer is the whole fresh view
   async function patch(data: Partial<{ config: TournamentConfig; pairings: Pairing[]; rooms: Room[]; judges: Judge[] }>) {
-    const result = await api<HostView>(base, { method: "PATCH", body: data });
+    const body = data.pairings ? { ...data, expectedPairings: view.pairings } : data;
+    const result = await api<HostView>(base, { method: "PATCH", body });
     if (!result.ok) return result.error;
     setView(payload(result));
     return null;
@@ -100,10 +101,7 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
   async function removeJudge(judge: Judge) {
     const result = await api<{ judges: Judge[] }>(`${base}/judges`, { method: "DELETE", body: { id: judge.id } });
     if (!result.ok) return result.error;
-    // Rooms that had this judge lose them
-    const rooms = view.rooms.map((room) => ({ ...room, judgeId: room.judgeId === judge.id ? "" : room.judgeId, panelistIds: room.panelistIds.filter((pid) => pid !== judge.id) }));
-    setView((v) => ({ ...v, judges: result.judges, rooms }));
-    if (rooms.some((room, i) => room !== view.rooms[i])) await patch({ rooms });
+    await load();
     return null;
   }
 
@@ -132,11 +130,12 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
     { key: "settings", label: "Settings" },
     { key: "teams", label: "Teams", count: teams.length },
     { key: "scores", label: "Scores", count: pending },
-    ...(usesDraw ? [{ key: "draw", label: "Draw" }, { key: "rooms", label: "Rooms" }] : []),
+    ...(usesDraw ? [{ key: "draw", label: "Draw" }] : []),
+    { key: "rooms", label: "Rooms" },
     { key: "judges", label: "Judges", count: view.judges.length },
     { key: "share", label: "Share" },
   ];
-  const shownTab = !usesDraw && (tab === "draw" || tab === "rooms") ? "overview" : tab;
+  const shownTab = !usesDraw && tab === "draw" ? "overview" : tab;
 
   return (
     <div>
@@ -229,7 +228,7 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
 
       {shownTab === "draw" && usesDraw && <PairingsPanel config={config} teams={teams} scores={scores} pairings={view.pairings} rooms={view.rooms} judges={view.judges} onPairingsChange={(pairings) => patch({ pairings })} onConfigChange={(next) => patch({ config: next })} />}
 
-      {shownTab === "rooms" && usesDraw && <RoomsPanel rooms={view.rooms} judges={view.judges} onChange={(rooms) => patch({ rooms })} />}
+      {shownTab === "rooms" && <RoomsPanel endpoint={`${base}/rooms`} judges={view.judges} onSaved={load} />}
 
       {shownTab === "judges" && <JudgesPanel judges={view.judges} judgeUrl={judgeUrl} onAdd={addJudge} onRemove={removeJudge} />}
 

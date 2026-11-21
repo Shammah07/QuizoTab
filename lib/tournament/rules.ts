@@ -382,7 +382,7 @@ export function normalizePairings(input: unknown): Pairing[] {
 
 export function normalizeRooms(input: unknown): Room[] {
   return objects(input, 200).map((room) => ({
-    id: str(room.id) || uid(),
+    id: str(room.id),
     name: str(room.name, 80),
     judgeId: str(room.judgeId),
     panelistIds: Array.isArray(room.panelistIds) ? room.panelistIds.filter((id): id is string => typeof id === "string").slice(0, 20) : [],
