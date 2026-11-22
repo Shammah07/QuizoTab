@@ -32,6 +32,11 @@ async function roomScore(tx: Db, tournamentId: string, roomId: string, scoreId: 
   return score;
 }
 
+function reviewBlocks(impact: Awaited<ReturnType<typeof disputes>>[number]) {
+  const held = impact.last?.action === "hold";
+  return { approval:held || impact.restricted, rejection:held || (impact.dependent.some(p=>p.released || p.scored) && impact.last?.action!=="uphold") };
+}
+
 export function pendingRoomScores(db: Db, id: string, roomId: string, session: Session | null) {
   return withScoringRoom(db, id, roomId, session, "room_host", async tx => {
     const prior = alias(scores, "prior_score");
@@ -48,7 +53,9 @@ export function pendingRoomScores(db: Db, id: string, roomId: string, session: S
     const roundNames = new Map(config.rounds.map(r => [r.id, r.name]));
     const fixtures = new Map(pairings.map(p => [p.id, p.matchLabel || STAGE_LABELS[p.stage]]));
     const roomName = rooms.find(r => r.id === roomId)?.name;
-    return queue.map(row => ({ ...row, roundName: roundNames.get(row.roundId) ?? row.roundId,
+    const cases = queue.some(row=>row.correctionOf) ? await disputes(tx,id) : [];
+    const blocks = new Map(cases.map(c=>[c.scoreId,reviewBlocks(c)]));
+    return queue.map(row => ({ ...row, adjudication:blocks.get(row.scoreId) ?? null, roundName: roundNames.get(row.roundId) ?? row.roundId,
       contextName: (config.format === "league" || config.format === "quiz-night" ? roomName : fixtures.get(row.contextId)) ?? row.contextId }));
   });
 }
@@ -69,9 +76,8 @@ export function decideRoomScore(db: Db, id: string, roomId: string, session: Ses
     if (predecessor?.status === "approved") {
       const impact = (await disputes(tx,id)).find(c => c.scoreId === entry.id);
       if (!impact) throw new ApiError(409,"Correction impact is unavailable.");
-      const needsRuling = impact.dependent.some(p => p.released || p.scored);
-      if (impact.last?.action === "hold" || (status === "approved" && impact.restricted) ||
-          (status === "rejected" && needsRuling && impact.last?.action !== "uphold")) {
+      const blocked = reviewBlocks(impact);
+      if (status === "approved" ? blocked.approval : blocked.rejection) {
         throw new ApiError(409,"The official result is protected. Refer this correction to the tournament administrator.");
       }
       if (status === "approved" && impact.changes.includes("tiebreak")) {

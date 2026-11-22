@@ -149,6 +149,12 @@ The owner overview and owner-only adjudication API expose pending competitive co
 
 The default Neon regression uses rollback fixtures. The focused `npm run test:score-submissions:dev -- --adjudication-only` run also exercises independent commits and archives its unlisted synthetic tournament to retain audit history. The database activation constraint remains in force.
 
+## Unit 6C — Signed-in room staff
+
+The staff directory at `/staff` lists active room assignments independently of legacy judge access. Each workspace reloads released fixtures or rosters, question limits and room history from an authenticated, engine-gated read endpoint. Other judges’ private pending points and reasons are withheld. Judges use the existing score and correction endpoints. Room hosts use the existing queue, decision and completion endpoints. Completion previews execute the same validations up to the first write. Adjudication flags on queue items use the same restrictions as the decision service.
+
+Only opaque retry IDs and payload digests persist in tab storage. After a lost response, refresh the room and, if the attempt is still absent, re-enter identical details in the same tab. A changed payload receives a separate ID.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

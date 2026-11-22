@@ -4,7 +4,7 @@ import { authenticated, requireActiveAssignment } from "./room-access";
 import type { Session } from "@/lib/auth/session";
 import type { Db } from "@/lib/db";
 import { changeRoom, listRoomSetup } from "./room-management";
-import { roomCompletion, ownerReopening } from "./fixture-lifecycle";
+import { completionPreview, roomCompletion, ownerReopening } from "./fixture-lifecycle";
 import { submitRoomScore } from "./room-scoring";
 import { decideRoomScore, pendingRoomScores, proposeCorrection } from "./score-review";
 
@@ -63,6 +63,7 @@ export function lifecycleHandlers(database: () => Db, session: () => Promise<Ses
   return {
     GET: route<RoomContext>(async (request,{params}) => {
       const {id,roomId} = await params;
+      if (!owner && request.nextUrl.searchParams.get("preview") === "1") return completionPreview(database(),id,roomId,await session(),request.nextUrl.searchParams.get("contextId"));
       return service(database(),id,roomId,await session(),request.nextUrl.searchParams.get("contextId"),true);
     }),
     POST: route<RoomContext>(async (request,{params}) => {

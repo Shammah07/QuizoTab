@@ -25,6 +25,7 @@ export default async function HostPage({ searchParams }: PageProps<"/host">) {
     return (
       <HostFrame>
         <h1 className="text-[clamp(30px,4vw,44px)] leading-[1.05] font-extrabold text-white">Judge account</h1>
+        <ButtonLink href="/staff" variant="line">My room assignments</ButtonLink>
         <p className="mt-4 max-w-[62ch] text-muted">Your account is a judge login. Open the judge link the host sent you to register teams and enter scores. Hosting a tournament needs a host account.</p>
       </HostFrame>
     );
@@ -43,7 +44,7 @@ export default async function HostPage({ searchParams }: PageProps<"/host">) {
           The tournament was deleted.
         </Alert>
       )}
-      <ButtonLink href="/host/new">New tournament</ButtonLink>
+      <div className="flex flex-wrap gap-3"><ButtonLink href="/host/new">New tournament</ButtonLink><ButtonLink href="/staff" variant="line">My room assignments</ButtonLink></div>
       <div className="mt-8">
         <TournamentList tournaments={tournaments} />
       </div>

@@ -40,9 +40,10 @@ export async function requireActiveAssignment(db: Db, id: string, roomId: string
 
 // Future scoring commands must call these inside their own locked transaction.
 async function requireRoomRole(db: Db, id: string, roomId: string, session: Session | null, role: RoomRole) {
-  await requireActiveAssignment(db, id, roomId, session, role);
+  const assignment = await requireActiveAssignment(db, id, roomId, session, role);
   const [row] = await db.select({ engine: tournaments.scoringEngineVersion }).from(tournaments).where(eq(tournaments.id, id));
   if (row?.engine !== "room_v1") throw new ApiError(409, "Room scoring is disabled.");
+  return assignment;
 }
 export const requireRoomJudge = (db: Db, id: string, roomId: string, session: Session | null) => requireRoomRole(db, id, roomId, session, "judge");
 export const requireRoomHost = (db: Db, id: string, roomId: string, session: Session | null) => requireRoomRole(db, id, roomId, session, "room_host");

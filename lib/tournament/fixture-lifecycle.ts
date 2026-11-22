@@ -76,8 +76,8 @@ async function requireCompleteCoverage(tx: Db, id: string, roomId: string, conte
   }
 }
 
-async function lifecycle(tx: Db, id: string, roomId: string, actor: number, contextId: string, action: "read" | "close" | "reopen", command?: Command) {
-  const s = await lifecycleSnapshot(tx, id);
+async function lifecycle(tx: Db, id: string, roomId: string, actor: number, contextId: string, action: "read" | "close" | "reopen", command?: Command, preview = false, snapshot?: Snapshot) {
+  const s = snapshot ?? await lifecycleSnapshot(tx, id);
   const { config, pairings, plan, configRevision, lifecycleRevision } = s;
   if (!plan.rounds.length) throw new ApiError(409, "Configure a valid scoring plan first.");
   const points = isPointsFormat(config);
@@ -108,6 +108,7 @@ async function lifecycle(tx: Db, id: string, roomId: string, actor: number, cont
     if (!completed) throw new ApiError(409, "Context is already open.");
     if (pair && hasLaterDraw(pair, pairings, config)) throw new ApiError(409, "A later draw depends on this result. Reopening requires adjudication.");
   }
+  if (preview) return view;
   const closing = action === "close";
   const revision = lifecycleRevision + 1;
   const event = {
@@ -138,6 +139,50 @@ export function roomCompletion(db: Db, id: string, room: string, session: Sessio
     if (!cmd.success) throw new ApiError(400, "Provide a context and its configuration and lifecycle revisions.");
     if (!active) throw new ApiError(409, "Tournament is not active.");
     return lifecycle(tx, id, room, host.userId, cmd.data.contextId, "close", cmd.data);
+  });
+}
+
+// Use the same validation path as POST, stopping before the first write.
+export function completionPreview(db: Db, id: string, room: string, session: Session | null, input: unknown) {
+  return withScoringRoom(db,id,room,session,"room_host",async (tx,actor,active) => {
+    const contextId = readContext(input);
+    const snapshot = await lifecycleSnapshot(tx,id);
+    const view = await lifecycle(tx,id,room,actor.userId,contextId,"read",undefined,false,snapshot);
+    const {config,plan,pairings} = snapshot;
+    const pair = isPointsFormat(config) ? undefined : pairings.find(p=>p.id===contextId && p.roomId===room);
+    const roster = plan.rosters.find(r=>r.id===contextId && r.roomId===room);
+    const members = pair ? [pair.teamAId,pair.teamBId].filter((id):id is string=>!!id) : roster?.teamIds ?? [];
+    const rounds = pair ? stageRoundsFor(config,pair.stage,pair.matchLabel) : config.rounds.filter(r=>r.id===roster?.roundId);
+    const questions = pair && members.length===1 ? [] : rounds.flatMap(r=>
+      (plan.rounds.find(p=>p.id===r.id)?.questions ?? []).map(q=>({round:r.id,name:r.name,question:q.id})));
+    const rows = await tx.select({team:scores.teamId,round:scores.roundId,question:scores.questionKey,
+      status:scores.status,parent:scores.correctionOf}).from(scores).where(and(eq(scores.tournamentId,id),eq(scores.roomId,room),
+        eq(scores.contextId,contextId),inArray(scores.status,["approved","pending"])));
+    const slot = (team:string,round:string,question:string)=>JSON.stringify([team,round,question]);
+    const answered = new Set(rows.map(r=>slot(r.team,r.round,r.question)));
+    const approved = new Set(rows.filter(r=>r.status==="approved").map(r=>slot(r.team,r.round,r.question)));
+    const names = members.length ? await tx.select({id:teams.id,name:teams.name}).from(teams)
+      .where(and(eq(teams.tournamentId,id),inArray(teams.id,members))) : [];
+    const teamNames = new Map(names.map(t=>[t.id,t.name]));
+    const pending = rows.filter(r=>r.status==="pending");
+    const coverage = {required:members.length*questions.length,approved:0,missingCount:0,missing:[] as string[],
+      pendingScores:pending.filter(r=>!r.parent).length,pendingRevisions:pending.filter(r=>r.parent).length};
+    for (const team of members) for (const q of questions) {
+      const key = slot(team,q.round,q.question);
+      if (approved.has(key)) coverage.approved++;
+      if (!answered.has(key)) {
+        coverage.missingCount++;
+        if (coverage.missing.length<40) coverage.missing.push([teamNames.get(team) ?? team,q.name,q.question].join(" · "));
+      }
+    }
+    if (view.completed || !active) return {...view,coverage,blocker:view.completed ? "Already complete." : "Tournament is not active."};
+    try {
+      await lifecycle(tx,id,room,actor.userId,contextId,"close",view,true,snapshot);
+      return {...view,coverage,blocker:null};
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) return {...view,coverage,blocker:error.message};
+      throw error;
+    }
   });
 }
 

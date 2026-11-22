@@ -9,7 +9,7 @@ import { adjudicationHandlers } from "@/lib/tournament/room-handlers";
 import { ownerReopening, roomCompletion } from "@/lib/tournament/fixture-lifecycle";
 import { saveRoomPairings } from "@/lib/tournament/room-management";
 import { submitRoomScore } from "@/lib/tournament/room-scoring";
-import { decideRoomScore, proposeCorrection } from "@/lib/tournament/score-review";
+import { decideRoomScore, pendingRoomScores, proposeCorrection } from "@/lib/tournament/score-review";
 import { saveScoringPlan } from "@/lib/tournament/scoring-plan";
 import { officialAwards } from "@/lib/tournament/official-standings";
 import { readState, saveSharing, writeState } from "@/lib/tournament/store";
@@ -137,6 +137,8 @@ export async function verifyAdjudication(db:Db) {
     const pending = await a.propose(conflicting.scoreId,0);
     await assert.rejects(a.decide(pending.scoreId),{status:409});
     await assert.rejects(a.decide(pending.scoreId,"reject"),{status:409});
+    const queue = await pendingRoomScores(fixtureAdapter(db,b.id),b.id,"hall",b.host);
+    assert.deepEqual(queue.find(s=>s.scoreId===pending.scoreId)?.adjudication,{approval:true,rejection:true});
     const c = await current();
     assert.equal(c.dependent[0].scored,scored);
     assert.equal(c.dependent[0].released,true);
