@@ -48,7 +48,7 @@ export function AdjudicationPanel({endpoint}:{endpoint:string}) {
       <p>{c.changes.join(", ")}{c.last && " · Last ruling: "+c.last.action}</p>
       {c.changes.includes("winner") && <p>Winner · {c.previousWinner ?? "Undecided"} → {c.proposedWinner ?? "Undecided"}</p>}
       <ul>{c.dependent.map(p => <li key={p.id}>{p.matchLabel || p.stage} · {p.teamA ?? "Bye"} / {p.teamB ?? "Bye"} · {p.scored ? "Scoring history" : p.released ? "Released" : "Draft"}</li>)}</ul>
-      {!c.dependent.length && c.finalized && <p>Reopen this result before accepting a change to its outcome.</p>}
+      {!c.dependent.length && c.finalized && <p>Reopen this result in <a className="underline" href="?tab=operations">Room operations</a> before accepting a change to its outcome.</p>}
       {c.last?.action === "uphold" ? <p>The assigned room host must reject the proposal to finish review.</p> :
         <><label>Ruling <select name="action">
           {c.last?.action === "hold" ? <option value="resume">Lift hold</option> : <option value="hold">Hold for review</option>}

@@ -22,7 +22,7 @@ export const POST = route<Context>(async (request, { params }) => {
     await judgedTournament(tx,tournament.id);
     unwrap(await addTeam(tx,tournament.id,data,user.name));
   });
-  else if (data.action === "score") unwrap(await applyScoreOp(db(), tournament.id, { ...data, op: "enter" }, { name: user.name, isHost }));
+  else if (data.action === "score") unwrap(await applyScoreOp(transactionDb(), tournament.id, { ...data, op: "enter" }, { name: user.name, isHost }));
   else throw new ApiError(400, "Unknown action.");
   return judgeView(db(), tournament);
 });

@@ -91,6 +91,8 @@ export async function verifyAdjudication(db:Db) {
   await a.close();
   const draft = {...b.final,teamAId:b.teams[1].id};
   await a.draw(draft);
+  const preview = await ownerReopening(fixtureAdapter(db,b.id),b.id,"hall",b.admin,b.pair.id,"preview");
+  assert.ok("blocker" in preview && /later draw/.test(preview.blocker ?? ""));
   const conflicting = await a.propose(change.scoreId,3);
   await assert.rejects(a.decide(conflicting.scoreId),{status:409});
   assert.equal((await a.api(undefined,b.judge)).status,404);

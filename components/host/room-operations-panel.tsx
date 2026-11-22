@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { RoomOperations } from "@/lib/tournament/room-operations";
 import { api } from "@/components/quiz/api";
 import { Button } from "@/components/ui/button";
+import { ReopenContext } from "./reopen-context";
 import { AdjudicationPanel } from "./adjudication-panel";
 
 type Plan = RoomOperations["plan"];
@@ -138,6 +139,8 @@ export function RoomOperationsPanel({endpoint,adjudication}:{endpoint:string;adj
           <p>{c.participants.join(", ")}</p>
           {!c.completed && <><p>{c.reasons.length ? c.reasons.join(" ") : "Ready for scoring."}</p>
             <p>Completion · {c.blockers.length ? c.blockers.join(" ") : "Available to the assigned room host."}</p></>}
+          {view.enabled && c.completed && <ReopenContext key={c.id} endpoint={endpoint.replace("/api/host/tournaments/","/api/tournaments/").replace(/\/operations$/, "")+"/rooms/"+encodeURIComponent(room.id)+"/reopen"}
+            contextId={c.id} label={c.label} refresh={read}/>}
           {c.disputes.map(d=><p key={d.scoreId}>Adjudication · {d.status} · {d.changes.join(", ")}</p>)}
           {view.pointsFormat && !c.completed && <Button size="sm" variant="line" disabled={!!editor || busy || view.status==="archived" || (c.released ? c.hasHistory : !!c.setup.length)}
             onClick={()=>void change({action:c.released?"withdraw":"release",rosterId:c.id,revision:view.revision})}>{c.released?"Withdraw unscored roster":"Release roster"}</Button>}

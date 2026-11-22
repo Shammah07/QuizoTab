@@ -186,11 +186,25 @@ export function completionPreview(db: Db, id: string, room: string, session: Ses
   });
 }
 
-export function ownerReopening(db: Db, id: string, room: string, session: Session | null, input: unknown, read = false) {
+export function ownerReopening(db: Db, id: string, room: string, session: Session | null, input: unknown, read: boolean | "preview" = false) {
   return withRoomOwner(db, id, session, async tx => {
     const [source] = await tx.select({ engine: tournaments.scoringEngineVersion }).from(tournaments).where(eq(tournaments.id, id));
     if (source.engine !== "room_v1") throw new ApiError(409, "Room scoring is disabled.");
-    if (read) return lifecycle(tx, id, room, session!.userId, readContext(input), "read");
+    if (read===true) return lifecycle(tx, id, room, session!.userId, readContext(input), "read");
+    if (read==="preview") {
+      const context=readContext(input);
+      const snapshot=await lifecycleSnapshot(tx,id);
+      const view=await lifecycle(tx,id,room,session!.userId,context,"read",undefined,false,snapshot);
+      const [t]=await tx.select({status:tournaments.status}).from(tournaments).where(eq(tournaments.id,id));
+      if(t.status!=="active") return {...view,blocker:"Tournament is not active."};
+      try {
+        await lifecycle(tx,id,room,session!.userId,context,"reopen",view,true,snapshot);
+        return {...view,blocker:null};
+      } catch(error) {
+        if(error instanceof ApiError && error.status===409) return {...view,blocker:error.message};
+        throw error;
+      }
+    }
     const cmd = reopen.safeParse(input);
     if (!cmd.success) throw new ApiError(400, "Provide the context, current revisions and a reopening reason.");
     const [t] = await tx.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, id));

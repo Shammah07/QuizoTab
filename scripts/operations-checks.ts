@@ -1,8 +1,9 @@
+import { applyScoreOp,createTournament,readState,resetTournament,writeState } from "@/lib/tournament/store";
 import assert from "node:assert/strict";
 import { and, eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import type { Db } from "@/lib/db";
-import { tournaments, tournamentRoomStaff as staff } from "@/lib/db/schema";
+import { users, tournaments, tournamentRoomStaff as staff } from "@/lib/db/schema";
 import { changeOperations, readOperations } from "@/lib/tournament/room-operations";
 import { operationsHandlers } from "@/lib/tournament/room-handlers";
 import { decideRoomScore } from "@/lib/tournament/score-review";
@@ -14,6 +15,14 @@ export async function verifyOperations(db:Db,format:Format) {
   const {id,adapter,judges}=f;
   const [owner]=await db.select({userId:tournaments.ownerId}).from(tournaments).where(eq(tournaments.id,id));
   const admin={...owner,name:"Owner",role:"host" as const};
+  const before=(await readState(db,id)).scores;
+  for (const isHost of [true,false]) await assert.rejects(applyScoreOp(adapter,id,{op:"enter"},{name:"fixture",isHost}),{status:409});
+  await assert.rejects(writeState(adapter,id,"scores",[]),{status:409});
+  await assert.rejects(resetTournament(adapter,id),{status:409});
+  assert.deepEqual((await readState(db,id)).scores,before);
+  const [judgeOnly]=await db.insert(users).values({name:"Judge",role:"judge",email:crypto.randomUUID()+"@example.test",password:"unusable"}).returning();
+  const denied=await createTournament(db,judgeOnly.id,{name:"Denied",category:"Test",format,year:2026});
+  assert.ok(!denied.ok && denied.status===403);
   const read=()=>readOperations(adapter,id,admin);
   const change=(body:Record<string,unknown>)=>changeOperations(adapter,id,admin,body);
   const save=async(plan:unknown)=>change({action:"save",revision:(await read()).revision,plan});

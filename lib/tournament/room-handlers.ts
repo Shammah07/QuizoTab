@@ -64,6 +64,7 @@ export function lifecycleHandlers(database: () => Db, session: () => Promise<Ses
   return {
     GET: route<RoomContext>(async (request,{params}) => {
       const {id,roomId} = await params;
+      if (owner && request.nextUrl.searchParams.get("preview")==="1") return ownerReopening(database(),id,roomId,await session(),request.nextUrl.searchParams.get("contextId"),"preview");
       if (!owner && request.nextUrl.searchParams.get("preview") === "1") return completionPreview(database(),id,roomId,await session(),request.nextUrl.searchParams.get("contextId"));
       return service(database(),id,roomId,await session(),request.nextUrl.searchParams.get("contextId"),true);
     }),

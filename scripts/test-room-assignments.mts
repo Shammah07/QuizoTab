@@ -17,7 +17,7 @@ const db = drizzle(pg, { schema });
 try {
   await migrate(db, { migrationsFolder: "./drizzle" });
   const accounts = await db.insert(schema.users).values(["owner", "judge", "host", "alternate", "historian"].map(name => ({
-    name, email: name + "@example.test", password: "fixture", emailVerifiedAt: new Date(), role: "judge" as const,
+    name, email: name + "@example.test", password: "fixture", emailVerifiedAt: new Date(), role: name === "owner" ? "host" as const : "judge" as const,
   }))).returning();
   const [owner, judge, host, alternate, historian] = accounts.map(a => ({ userId: a.id, name: a.name, role: a.role }));
   async function tournament() {

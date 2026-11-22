@@ -131,14 +131,14 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
     { key: "overview", label: "Overview" },
     { key: "settings", label: "Settings" },
     { key: "teams", label: "Teams", count: teams.length },
-    { key: "scores", label: "Scores", count: pending },
+    ...(view.roomAwards===null ? [{ key: "scores", label: "Scores", count: pending }] : []),
     ...(usesDraw ? [{ key: "draw", label: "Draw" }] : []),
     { key: "rooms", label: "Rooms" },
     { key: "operations", label: "Room operations" },
     { key: "judges", label: "Judges", count: view.judges.length },
     { key: "share", label: "Share" },
   ];
-  const shownTab = !usesDraw && tab === "draw" ? "overview" : tab;
+  const shownTab = view.roomAwards!==null && tab==="scores" ? "operations" : !usesDraw && tab === "draw" ? "overview" : tab;
 
   return (
     <div>
@@ -185,8 +185,8 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
           {view.roomAwards && <AdjudicationPanel endpoint={base+"/adjudication"} />}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <StatCard label="Teams registered" value={teams.length} />
-            <StatCard label="Scores entered" value={scores.length} tone="live" />
-            <StatCard label="Awaiting approval" value={pending} tone={pending > 0 ? "amber" : "muted"} />
+            {view.roomAwards===null && <StatCard label="Scores entered" value={scores.length} tone="live" />}
+            {view.roomAwards===null && <StatCard label="Awaiting approval" value={pending} tone={pending > 0 ? "amber" : "muted"} />}
             <StatCard label="Format" value={FORMATS[format].label} />
             <StatCard label="Rounds" value={config.rounds.length} />
             <StatCard label="Judges" value={view.judges.length} />

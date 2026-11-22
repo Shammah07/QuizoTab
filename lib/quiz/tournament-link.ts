@@ -1,3 +1,4 @@
+import { withLegacyScoring } from "@/lib/tournament/legacy-scoring";
 import "server-only";
 import { randomBytes } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -29,7 +30,7 @@ export async function hostTournaments(db: Db, ownerId: number) {
   const list = await db
     .select({ id: tournaments.id, name: tournaments.name, category: tournaments.category })
     .from(tournaments)
-    .where(and(eq(tournaments.ownerId, ownerId), eq(tournaments.status, "active")))
+    .where(and(eq(tournaments.ownerId, ownerId), eq(tournaments.status, "active"),eq(tournaments.scoringEngineVersion,"legacy")))
     .orderBy(desc(tournaments.createdAt))
     .limit(20);
   if (list.length === 0) return [];
@@ -55,54 +56,55 @@ export function tournamentTeams(db: Db, tournamentId: string) {
 
 // Adds each team's quiz result to the tournament round, scaled to the round's points range.
 // Returns an error message, or null when the scores were sent.
-export async function sendScores(db: Db, game: Game): Promise<string | null> {
+export async function sendScores(database: Db, game: Game): Promise<string | null> {
   if (!game.tournamentId || game.status !== "finished") return "Finish the game first.";
   if (game.scoresSentAt) return "These scores were already sent.";
 
-  const [state] = await db
-    .select({ value: tournamentState.value })
-    .from(tournamentState)
-    .where(and(eq(tournamentState.tournamentId, game.tournamentId), eq(tournamentState.key, "config")));
-  const config = state?.value as Config | undefined;
-  if (!config || Array.isArray(config)) return "The tournament could not be read. Try again.";
+  const tournamentId=game.tournamentId;
+  return withLegacyScoring(database,tournamentId,async db=>{
+    const [state] = await db
+      .select({ value: tournamentState.value })
+      .from(tournamentState)
+      .where(and(eq(tournamentState.tournamentId, tournamentId), eq(tournamentState.key, "config")));
+    const config = state?.value as Config | undefined;
+    if (!config || Array.isArray(config)) return "The tournament could not be read. Try again.";
 
-  // The round's own points range, or 0 to the tournament's max points per round
-  let maxRound = Number(config.maxScorePerRound ?? 100);
-  let minRound = 0;
-  for (const round of config.rounds ?? []) {
-    if (round.id !== game.roundId) continue;
-    if (round.minPoints !== undefined && round.minPoints !== "") minRound = Number(round.minPoints);
-    if (round.maxPoints !== undefined && round.maxPoints !== "") maxRound = Number(round.maxPoints);
-  }
+    // The round's own points range, or 0 to the tournament's max points per round
+    let maxRound = Number(config.maxScorePerRound ?? 100);
+    let minRound = 0;
+    for (const round of config.rounds ?? []) {
+      if (round.id !== game.roundId) continue;
+      if (round.minPoints !== undefined && round.minPoints !== "") minRound = Number(round.minPoints);
+      if (round.maxPoints !== undefined && round.maxPoints !== "") maxRound = Number(round.maxPoints);
+    }
 
-  const possible = game.questions.reduce((sum, q) => sum + pointsMax(q), 0);
-  const now = new Date().toISOString();
-  const scores = (await playersOf(db, game.id))
-    .filter((p) => p.teamId)
-    .map((p) => ({
-      id: randomBytes(8).toString("hex"),
-      teamId: p.teamId,
-      roundId: game.roundId,
-      points: scaleToRound(p.score, possible, minRound, maxRound),
-      judgeName: "Online quiz",
-      enteredAt: now,
-      approved: false,
-    }));
+    const possible = game.questions.reduce((sum, q) => sum + pointsMax(q), 0);
+    const now = new Date().toISOString();
+    const scores = (await playersOf(db, game.id))
+      .filter((p) => p.teamId)
+      .map((p) => ({
+        id: randomBytes(8).toString("hex"),
+        teamId: p.teamId,
+        roundId: game.roundId,
+        points: scaleToRound(p.score, possible, minRound, maxRound),
+        judgeName: "Online quiz",
+        enteredAt: now,
+        approved: false,
+      }));
 
-  // Claim the send first: of two clicks at the same moment, only one gets past this line
-  const [claimed] = await db
-    .update(quizGames)
-    .set({ scoresSentAt: sql`now()`, version: sql`${quizGames.version} + 1` })
-    .where(and(eq(quizGames.id, game.id), isNull(quizGames.scoresSentAt)))
-    .returning({ id: quizGames.id });
-  if (!claimed) return "These scores were already sent.";
+    // Claim the send first: of two clicks at the same moment, only one gets past this line
+    const [claimed] = await db
+      .update(quizGames)
+      .set({ scoresSentAt: sql`now()`, version: sql`${quizGames.version} + 1` })
+      .where(and(eq(quizGames.id, game.id), isNull(quizGames.scoresSentAt)))
+      .returning({ id: quizGames.id });
+    if (!claimed) return "These scores were already sent.";
 
-  try {
     // Added to whatever scores are there in one step, so a judge saving at the same moment loses nothing
     const added = JSON.stringify(scores);
     await db
       .insert(tournamentState)
-      .values({ tournamentId: game.tournamentId, key: "scores", value: scores })
+      .values({ tournamentId, key: "scores", value: scores })
       .onConflictDoUpdate({
         target: [tournamentState.tournamentId, tournamentState.key],
         set: {
@@ -110,11 +112,6 @@ export async function sendScores(db: Db, game: Game): Promise<string | null> {
           updatedAt: sql`now()`,
         },
       });
-  } catch (error) {
-    // Let the host try again
-    await db.update(quizGames).set({ scoresSentAt: null }).where(eq(quizGames.id, game.id));
-    console.error("QuizoTab could not send quiz scores:", error);
-    return "The scores could not be saved. Try again.";
-  }
-  return null;
+    return null;
+  });
 }

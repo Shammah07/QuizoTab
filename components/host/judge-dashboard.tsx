@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/components/quiz/api";
@@ -67,7 +69,7 @@ export function JudgeDashboard({ initial, judgeName, isHost }: { initial: JudgeV
 
       <Tabs
         tabs={[
-          { key: "score", label: "Enter scores" },
+          { key: "score", label: view.roomScoring ? "Room scoring" : "Enter scores" },
           { key: "register", label: "Register team" },
           { key: "teams", label: "Teams", count: view.teams.length },
         ]}
@@ -77,7 +79,8 @@ export function JudgeDashboard({ initial, judgeName, isHost }: { initial: JudgeV
       />
 
       {tab === "register" && <AddTeamForm label="Register team" onAdd={(fields: TeamFields) => post({ action: "register", ...fields })} />}
-      {tab === "score" && <EnterScoreForm view={view} judgeName={judgeName} isHost={isHost} onScore={(teamId, roundId, points) => post({ action: "score", teamId, roundId, points })} />}
+      {tab === "score" && view.roomScoring && <Link href="/staff" className="underline">Open assigned room workspaces</Link>}
+      {tab === "score" && !view.roomScoring && <EnterScoreForm view={view} judgeName={judgeName} isHost={isHost} onScore={(teamId, roundId, points) => post({ action: "score", teamId, roundId, points })} />}
       {tab === "teams" && <TeamsPanel teams={view.teams} />}
     </div>
   );

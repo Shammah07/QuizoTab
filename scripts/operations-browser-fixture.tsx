@@ -40,6 +40,47 @@ async function test() {
   await until(()=>!!document.querySelector('input[value="Q1"]'),"Slot missing");
   btn("Save plan")!.click();
   await until(()=>writes===1 && !!btn("Edit competition plan"),"Save failed");
+  const base = "/api/host/tournaments/synthetic";
+  const reopening = "/api/tournaments/synthetic/rooms/hall/reopen";
+  let lifecycleRevision = 1, attempts = 0, blocked = true;
+  state.enabled = true;
+  const context = state.rooms[0].contexts[0];
+  context.completed = true;
+  context.released = true;
+  window.fetch = async (url, options) => {
+    if (url === base + "/operations") return Response.json({...state,revision});
+    if (url === base + "/adjudication") return Response.json({cases:[],history:[]});
+    if (url === reopening + "?preview=1&contextId=draft") return Response.json({
+      contextId:"draft", completed:context.completed, configRevision:revision, lifecycleRevision,
+      blocker:blocked ? "A released downstream fixture depends on this result." : null,
+    });
+    if (url !== reopening || options?.method !== "POST") throw new Error("Unexpected reopening request");
+    const body = JSON.parse(String(options.body));
+    if (body.contextId !== "draft" || body.reason !== "Check the scoring sheet" ||
+        body.lifecycleRevision !== lifecycleRevision || body.configRevision !== revision) throw new Error("Incorrect reopening request");
+    attempts++;
+    lifecycleRevision++;
+    if (attempts === 1) return Response.json({error:"Lifecycle revision changed."},{status:409});
+    context.completed = false;
+    return Response.json({completed:false});
+  };
+  root.render(<RoomOperationsPanel key="reopen" endpoint={base+"/operations"} adjudication={base+"/adjudication"}/>);
+  await until(()=>!!btn("Review reopening"),"Missing reopening control");
+  btn("Review reopening")!.click();
+  await until(()=>document.body.textContent.includes("A released downstream fixture"),"Missing dependency blocker");
+  if (btn("Reopen Skills")) throw new Error("Blocked reopening available");
+  blocked = false;
+  btn("Review reopening")!.click();
+  await until(()=>!!btn("Reopen Skills"),"Missing reason form");
+  const reason = ()=>document.querySelector<HTMLInputElement>('input[name="reason"]')!;
+  btn("Reopen Skills")!.click();
+  if (!reason().validity.valueMissing || attempts) throw new Error("Empty reason accepted");
+  reason().value = "Check the scoring sheet";
+  btn("Reopen Skills")!.click();
+  await until(()=>document.body.textContent.includes("Lifecycle revision changed.") && !btn("Reopen Skills")?.disabled,"Stale response lost");
+  reason().value = "Check the scoring sheet";
+  btn("Reopen Skills")!.click();
+  await until(()=>attempts===2 && !btn("Review reopening") && document.body.textContent.includes("Skills · Released"),"Official monitor did not refresh after reopening");
   document.getElementById("result")!.textContent="PASS";
 }
 void test().catch(error=>{document.getElementById("result")!.textContent="FAIL "+String(error);});

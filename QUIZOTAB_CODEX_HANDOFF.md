@@ -163,6 +163,15 @@ The plan editor submits its original revision. The owner transaction locks the t
 
 Run the focused owner UI test with `node --import tsx scripts/test-staff-browser.mts --operations`. It uses an isolated browser profile and synthetic localhost responses. The service and route regressions are included in `npm test`.
 
+## Unit 6E-A pilot startup and browser readiness
+
+Normal development and production commands retain their existing configuration. The pilot commands require a dedicated worktree with a trusted local production build and no Next production dotenv files, including `.env.local`. Keep both inputs outside source control with OS permissions restricted to the operator. Obtain the branch-to-endpoint mapping independently from the Neon control plane. The pins file is a JSON object with `branch` set to `quizo-room-pilot-test`, the exact direct endpoint hostname in `directHost`, and the expected `database` and `runtimeRole`. Preparation additionally requires a distinct `setupRole`. Never derive the pins from a connection string.
+
+- `npm run start:pilot -- <absolute-pins-file> <absolute-runtime-env-file>` accepts only the pooled `DATABASE_URL` and fresh pilot `SESSION_SECRET` and `HMAC_SECRET`. The launcher rejects inherited database and TLS overrides. It validates the URL and probes the Neon HTTP adapter and a pooled transaction for the endpoint ID, database and role before starting Next on loopback. The Next startup hook repeats those checks on its own clients.
+- `npm run pilot:verify:setup -- <absolute-pins-file> <absolute-setup-env-file>` accepts only the same pooled runtime URL and a direct `DATABASE_URL_UNPOOLED` for the setup role. It also probes the direct identity. The setup credentials stay out of the application process.
+- Legacy score mutations and live quiz imports acquire the tournament lock and verify its engine. Creation requires a persisted host account and explicitly creates legacy tournaments. In Room operations, the owner can review a completed fixture or roster, inspect the lifecycle service's dependency checks, and supply a reason to reopen against the displayed revisions. Room-host score decisions retain their separate assignment requirement.
+- `npm test` exercises refusal paths locally and uses PGlite for scoring and lifecycle integration. `node --import tsx scripts/test-staff-browser.mts --operations` exercises the actual administrator components in Chromium using synthetic HTTP responses. Successful startup on a real pilot branch requires separately authorized verification.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

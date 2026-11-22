@@ -1,3 +1,4 @@
+import { lockedEngine, withLegacyScoring } from "./legacy-scoring";
 import "server-only";
 import { and, asc, desc, eq, inArray, notExists, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
@@ -130,19 +131,24 @@ export async function createTournament(db: Db, ownerId: number, input: Tournamen
   const base = template && template.format === d.format ? { ...template, rounds: template.rounds.map((r) => ({ ...r, id: uid() })) } : defaultConfig(d.format);
   const config: TournamentConfig = { ...base, name: d.name, startDate: d.startDate, endDate: d.endDate, setupDone: true };
 
-  const [created] = await db
-    .insert(tournaments)
-    .values({ ownerId, name: d.name, category: d.category, year: d.year, startDate: d.startDate || null, endDate: d.endDate || null, status: "active" })
-    .returning(row);
-  await db.insert(tournamentState).values([
-    { tournamentId: created.id, key: "config", value: config },
-    { tournamentId: created.id, key: "scores", value: [] },
-    { tournamentId: created.id, key: "pairings", value: [] },
-    { tournamentId: created.id, key: "rooms", value: [] },
-    { tournamentId: created.id, key: "judges", value: [] },
-    { tournamentId: created.id, key: "sharing", value: normalizeSharing({}) },
-  ]);
-  return { ok: true, value: toRow(created) };
+  return db.transaction(async tx=>{
+    const [account]=await tx.select({role:users.role}).from(users).where(eq(users.id,ownerId)).for("share");
+    if(account?.role!=="host") return fail(403,"A host account is required to create a tournament.");
+    const [created] = await tx
+      .insert(tournaments)
+      .values({ ownerId, name: d.name, category: d.category, year: d.year, startDate: d.startDate || null, endDate: d.endDate || null, status: "active", scoringEngineVersion: "legacy" })
+      .returning({ ...row, engine: tournaments.scoringEngineVersion });
+    if (created.engine !== "legacy") throw new ApiError(409, "Only legacy tournament creation is enabled.");
+    await tx.insert(tournamentState).values([
+      { tournamentId: created.id, key: "config", value: config },
+      { tournamentId: created.id, key: "scores", value: [] },
+      { tournamentId: created.id, key: "pairings", value: [] },
+      { tournamentId: created.id, key: "rooms", value: [] },
+      { tournamentId: created.id, key: "judges", value: [] },
+      { tournamentId: created.id, key: "sharing", value: normalizeSharing({}) },
+    ]);
+    return { ok: true as const, value: toRow(created) };
+  });
 }
 
 // Removes the tournament and everything in it. Live quiz games that sent scores to it are unlinked;
@@ -150,6 +156,7 @@ export async function createTournament(db: Db, ownerId: number, input: Tournamen
 export async function deleteTournament(db: Db, id: string, ownerId: number) {
   const own = await ownTournament(db, id, ownerId);
   if (!own) return false;
+  if (await lockedEngine(db,id)!=="legacy") throw new ApiError(409,"Room-scored tournaments must retain their history.");
   const [assignment] = await db.select({ id: tournamentRoomStaff.id }).from(tournamentRoomStaff).where(eq(tournamentRoomStaff.tournamentId, id)).limit(1);
   const [entry] = await db.select({ id: tournamentScoreEntries.id }).from(tournamentScoreEntries).where(eq(tournamentScoreEntries.tournamentId, id)).limit(1);
   if (assignment || entry) throw new ApiError(409, "This tournament has room staff or scoring history and must be kept.");
@@ -193,6 +200,11 @@ export async function readState(db: Db, tournamentId: string): Promise<State> {
 }
 
 export async function writeState<K extends StateKey>(db: Db, tournamentId: string, key: K, value: State[K]) {
+  if (key==="scores") return withLegacyScoring(db,tournamentId,tx=>persistState(tx,tournamentId,key,value));
+  return persistState(db,tournamentId,key,value);
+}
+
+async function persistState<K extends StateKey>(db: Db, tournamentId: string, key: K, value: State[K]) {
   await db
     .insert(tournamentState)
     .values({ tournamentId, key, value })
@@ -323,8 +335,10 @@ export async function deleteTeam(db: Db, tournamentId: string, teamId: unknown) 
     .where(and(eq(teams.id, teamId), eq(teams.tournamentId, tournamentId)))
     .returning({ id: teams.id });
   if (!gone) return false;
-  const { scores } = await readState(db, tournamentId);
-  await writeState(db, tournamentId, "scores", scores.filter((s) => s.teamId !== teamId));
+  if (await lockedEngine(db,tournamentId)==="legacy") {
+    const { scores } = await readState(db, tournamentId);
+    await writeState(db,tournamentId,"scores",scores.filter(s=>s.teamId!==teamId));
+  }
   return true;
 }
 
@@ -339,6 +353,10 @@ export type ScoreOp =
   | { op: "delete"; scoreId: string };
 
 export async function applyScoreOp(db: Db, tournamentId: string, input: Record<string, unknown>, who: { name: string; isHost: boolean }): Promise<Result<Score[]>> {
+  return withLegacyScoring(db,tournamentId,tx=>applyLegacyScore(tx,tournamentId,input,who));
+}
+
+async function applyLegacyScore(db: Db, tournamentId: string, input: Record<string, unknown>, who: { name: string; isHost: boolean }): Promise<Result<Score[]>> {
   const { config, scores } = await readState(db, tournamentId);
   let next: Score[];
 
@@ -374,7 +392,7 @@ export async function applyScoreOp(db: Db, tournamentId: string, input: Record<s
     return fail(400, "Unknown change.");
   }
 
-  await writeState(db, tournamentId, "scores", next);
+  await persistState(db, tournamentId, "scores", next);
   return { ok: true, value: next };
 }
 
@@ -501,13 +519,15 @@ export async function tournamentForGuestCode(db: Db, code: string) {
 // ---------- Whole views ----------
 
 // Clears every team, score and pairing of a tournament; its settings, rooms and judges are kept
-export async function resetTournament(db: Db, tournamentId: string) {
-  const plan=await storedScoringPlan(db,tournamentId);
-  if (plan.rosters.length) throw new ApiError(409,"Remove room rosters before clearing tournament teams.");
-  if (plan.completedContexts?.length) throw new ApiError(409,"Completed contexts must be retained.");
-  await db.delete(teams).where(eq(teams.tournamentId, tournamentId));
-  await writeState(db, tournamentId, "scores", []);
-  await writeState(db, tournamentId, "pairings", []);
+export async function resetTournament(database: Db, tournamentId: string) {
+  return withLegacyScoring(database,tournamentId,async db=>{
+    const plan=await storedScoringPlan(db,tournamentId);
+    if (plan.rosters.length) throw new ApiError(409,"Remove room rosters before clearing tournament teams.");
+    if (plan.completedContexts?.length) throw new ApiError(409,"Completed contexts must be retained.");
+    await db.delete(teams).where(eq(teams.tournamentId, tournamentId));
+    await persistState(db, tournamentId, "scores", []);
+    await writeState(db, tournamentId, "pairings", []);
+  });
 }
 
 // Everything the host's dashboard shows
@@ -525,7 +545,9 @@ export async function hostView(db: Db, tournament: TournamentRow) {
 // What a judge sees: the rules, teams, scores and the draw, never the sharing settings or guest code
 export async function judgeView(db: Db, tournament: TournamentRow) {
   const [state, teamList] = await Promise.all([readState(db, tournament.id), loadTeams(db, tournament.id)]);
-  return { tournament, config: state.config, teams: teamList, scores: state.scores, pairings: state.pairings };
+  const [row]=await db.select({engine:tournaments.scoringEngineVersion}).from(tournaments).where(eq(tournaments.id,tournament.id));
+  const roomScoring=row.engine==="room_v1";
+  return { tournament, config:state.config, teams:teamList, scores:roomScoring?[]:state.scores, pairings:state.pairings,roomScoring };
 }
 
 export type HostView = Awaited<ReturnType<typeof hostView>>;

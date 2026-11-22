@@ -133,6 +133,10 @@ export async function verifyLifecycle(db: Db, format: Format) {
   assert.equal((await workspace()).contexts[0].completed,true);
   const closed = await versions();
   assert.equal(closed.lifecycleRevision, 1);
+  const ownerPreview = await lifecycleHandlers(() => adapter, async () => host, true).GET(
+    new NextRequest("https://quizotab.test/reopen?preview=1&contextId="+encodeURIComponent(contextId)),params("hall"));
+  assert.equal(ownerPreview.status,200);
+  assert.deepEqual(await ownerPreview.json(),{...closed,completed:true,blocker:null});
   await assert.rejects(resetTournament(db,id),{status:409});
   await assert.rejects(saveConfig(db,id,{...config,maxScorePerRound:config.maxScorePerRound+1}),{status:409});
   await assert.rejects(f.submit({...data,clientRequestId:randomUUID()}),{status:409,message:"Reopen the completed context before scoring."});

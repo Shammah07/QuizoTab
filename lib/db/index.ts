@@ -3,6 +3,7 @@ import { neon, Pool } from "@neondatabase/serverless";
 import { drizzle as drizzlePool } from "drizzle-orm/neon-serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import type { PgDatabase } from "drizzle-orm/pg-core";
+import { readPins, pilotUrl, verifyPilot, probeIdentity } from "./pilot-target";
 import { env } from "@/lib/env";
 import * as schema from "./schema";
 
@@ -11,6 +12,12 @@ import * as schema from "./schema";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Db = PgDatabase<any, typeof schema>;
 
+function runtimeUrl() {
+  const raw=process.env.QUIZOTAB_PILOT_PINS;
+  if (raw===undefined) return env("DATABASE_URL");
+  try { return pilotUrl(env("DATABASE_URL"),readPins(JSON.parse(raw))); }
+  catch { throw new Error("Pilot runtime database configuration is invalid."); }
+}
 let client: Db | undefined;
 
 // The database, connected on first use rather than when this file loads,
@@ -20,7 +27,7 @@ let client: Db | undefined;
 // Anything that has to read, decide and then write inside a single transaction
 // (payment fulfilment) will use a pooled connection instead.
 export function db(): Db {
-  client ??= drizzle(neon(env("DATABASE_URL")), { schema });
+  client ??= drizzle(neon(runtimeUrl()), { schema });
   return client;
 }
 
@@ -28,6 +35,13 @@ export { schema };
 
 let transactionalClient: Db | undefined;
 export function transactionDb(): Db {
-  transactionalClient ??= drizzlePool(new Pool({ connectionString: env("DATABASE_URL") }), { schema });
+  transactionalClient ??= drizzlePool(new Pool({ connectionString: runtimeUrl() }), { schema });
   return transactionalClient;
+}
+
+export async function verifyRuntimePilot() {
+  try {
+    const pins=readPins(JSON.parse(process.env.QUIZOTAB_PILOT_PINS ?? ""));
+    await verifyPilot(pins,()=>probeIdentity(db()),()=>transactionDb().transaction(tx=>probeIdentity(tx)));
+  } catch { throw new Error("Pilot runtime database verification failed. Startup refused."); }
 }

@@ -1,3 +1,4 @@
+import { fixtureAdapter } from "./score-submission-fixture";
 // Checks the quiz backend (quizzes, public and solo play, live games, tournament scores) against a
 // throwaway Postgres that runs inside this script, with the real migrations applied. Run with: npm test
 import assert from "node:assert/strict";
@@ -262,6 +263,10 @@ await check("tournament games: teams play, and scores go to the round once", asy
   value(await answer(db, await game(id), (await playerByToken(db, owlsToken))!, 0, 0)); // Owls: ~1000 of 3000 possible
   g = value(await advance(db, await game(id), "end"));
 
+  const before=await db.select().from(schema.tournamentState).where(eq(schema.tournamentState.tournamentId,tournament.id));
+  await assert.rejects(sendScores(fixtureAdapter(db,tournament.id),g),{status:409});
+  assert.equal((await game(id)).scoresSentAt,null);
+  assert.deepEqual(await db.select().from(schema.tournamentState).where(eq(schema.tournamentState.tournamentId,tournament.id)),before);
   assert.equal(await sendScores(db, g), null);
   assert.equal(await sendScores(db, await game(id)), "These scores were already sent.");
   assert.equal(await sendScores(db, g), "These scores were already sent."); // a second click with the old page
