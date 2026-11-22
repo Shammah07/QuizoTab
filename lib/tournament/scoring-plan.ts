@@ -1,4 +1,5 @@
 import "server-only";
+import { guardDisputedChanges } from "./adjudication";
 import { and, eq, inArray, max, ne, or, sum } from "drizzle-orm";
 import { z } from "zod";
 import { ApiError } from "@/lib/api";
@@ -40,6 +41,7 @@ export function validRound(config: TournamentConfig, round: Plan["rounds"][numbe
 
 // Called inside the owner PATCH transaction after taking the tournament lock.
 export async function saveScoringPlan(tx: Db, id: string, input: unknown) {
+  await guardDisputedChanges(tx,id);
   const parsed = planSchema.safeParse(input);
   if (!parsed.success) throw new ApiError(400, "Invalid scoring plan.");
   const plan = parsed.data;
@@ -113,13 +115,13 @@ export async function saveScoringPlan(tx: Db, id: string, input: unknown) {
 
 export async function verifyAttempt(tx: Db, id: string, roomId: string, attempt: {
   contextId: string; roundId: string; teamId: string; questionKey: string; points: number;
-}) {
+}, correctionOfEffectiveAward = false) {
   const docs = await tx.select({ key: tournamentState.key, value: tournamentState.value }).from(tournamentState)
     .where(and(eq(tournamentState.tournamentId, id), inArray(tournamentState.key, ["scoringPlan", "config", "pairings"])));
   const value = (key: string) => docs.find(doc => doc.key === key)?.value;
   const plan = planSchema.safeParse(value("scoringPlan"));
   if (!plan.success) throw new ApiError(409, "Configure the scoring plan before submitting.");
-  if (plan.data.completedContexts?.includes(attempt.contextId)) throw new ApiError(409,"Reopen the completed context before scoring.");
+  if (!correctionOfEffectiveAward && plan.data.completedContexts?.includes(attempt.contextId)) throw new ApiError(409,"Reopen the completed context before scoring.");
   const config = normalizeConfig(value("config"));
   const round = plan.data.rounds.find(r => r.id === attempt.roundId);
   if (!round || !validRound(config, round)) throw new ApiError(422, "Round or question limits are unavailable.");

@@ -8,6 +8,7 @@ import type { Session } from "@/lib/auth/session";
 import type { Db } from "@/lib/db";
 import { teams, tournaments, tournamentRoomStaff as staff, tournamentScoreEntries, tournamentState, users } from "@/lib/db/schema";
 import { withRoomOwner } from "./room-access";
+import { guardDisputedChanges } from "./adjudication";
 import { hasLaterDraw } from "./fixture-lifecycle";
 import { officialAwards, officialFixture, roundTotals } from "./official-standings";
 import { readScoringPlan } from "./scoring-plan";
@@ -43,14 +44,25 @@ export function listRoomSetup(db: Db, id: string, session: Session | null) {
 }
 
 export async function saveRoomPairings(tx: Db, id: string, proposed: unknown, expected: unknown) {
+  const [source] = await tx.select({ engine: tournaments.scoringEngineVersion }).from(tournaments).where(eq(tournaments.id,id)).for("update");
   const { pairings, config } = await readState(tx, id);
   if (!isDeepStrictEqual(pairings, expected)) throw new ApiError(409, "The draw changed. Refresh before saving.");
   if (!Array.isArray(proposed)) throw new ApiError(400, "Invalid draw.");
   const rooms = await storedRooms(tx, id);
   const next = normalizePairings(proposed);
   if (next.some(p => p.roomId && !rooms.some(r => r.id === p.roomId))) throw new ApiError(409, "A selected room no longer exists.");
-  const [source] = await tx.select({ engine: tournaments.scoringEngineVersion }).from(tournaments).where(eq(tournaments.id,id));
   if (source.engine === "room_v1") {
+    await guardDisputedChanges(tx,id);
+    for (const fixture of pairings) {
+      if (fixture.released && pairings.some(upstream => hasLaterDraw(upstream,[fixture],config))) {
+        const proposed = next.find(p => p.id === fixture.id);
+        // A released dependent fixture can acquire a tiebreak, but cannot be
+        // converted back to a draft or assigned different participants.
+        if (!proposed || !isDeepStrictEqual({...fixture,tiebreakWinnerId:null},{...proposed,tiebreakWinnerId:null})) {
+          throw new ApiError(409,"A released dependent fixture must be preserved.");
+        }
+      }
+    }
     const used = await tx.selectDistinct({ contextId: tournamentScoreEntries.contextId }).from(tournamentScoreEntries)
       .where(eq(tournamentScoreEntries.tournamentId,id));
     for (const { contextId } of used) {
@@ -108,6 +120,7 @@ async function deleteRoom(tx: Db, id: string, roomId: string) {
   const { pairings } = await readState(tx, id);
   if (pairings.some(p => p.roomId === roomId && p.released)) throw new ApiError(409, "A released pairing still uses this room.");
   if (pairings.some(p => p.roomId === roomId)) {
+    await guardDisputedChanges(tx,id);
     await writeState(tx, id, "pairings", pairings.map(p => p.roomId === roomId ? { ...p, roomId: null } : p));
   }
   await tx.update(staff).set({ revokedAt: sql`clock_timestamp()` })

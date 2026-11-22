@@ -527,7 +527,7 @@ export function generateMatch1Pairings(teams: Team[], matchLabel = "Match 1"): P
 
 // Later matches: pair by cumulative standing, walking forward from each unpaired team to the
 // nearest standing they haven't already faced (the "one-up-one-down" swap of a controlled Swiss system)
-export function generateSwissPairings(matchLabel: string, teams: Team[], config: TournamentConfig, scores: Award[], existing: Pairing[]): Pairing[] {
+export function generateSwissPairings(matchLabel: string, teams: Pick<Team, "id" | "name">[], config: TournamentConfig, scores: Award[], existing: Pairing[]): Pairing[] {
   const order = prelimMatches(config);
   const priorMatches = order.slice(0, order.indexOf(matchLabel));
   const priorRounds = priorMatches.flatMap((m) => stageRoundsFor(config, "preliminary", m));
@@ -561,7 +561,7 @@ export function generateSwissPairings(matchLabel: string, teams: Team[], config:
 }
 
 // Power-protected (fold) seeding: the best seed faces the worst remaining seed
-export function generateFoldPairingsForStage(seeded: Array<Team | null>, stage: KnockoutStage, labels: string[]): Pairing[] {
+export function generateFoldPairingsForStage(seeded: Array<Pick<Team, "id"> | null>, stage: KnockoutStage, labels: string[]): Pairing[] {
   const midpoint = Math.ceil(seeded.length / 2);
   const upper = seeded.slice(0, midpoint);
   const lower = seeded.slice(midpoint).reverse();

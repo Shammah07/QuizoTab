@@ -1,6 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, notExists, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
+import { guardDisputedChanges } from "./adjudication";
 import { readScoringPlan } from "./scoring-plan";
 import { officialAwards, officialFixture, roundTotals } from "./official-standings";
 import { z } from "zod";
@@ -209,6 +210,7 @@ async function storedScoringPlan(db: Db, id: string) {
 }
 
 export async function saveConfig(db: Db, tournamentId: string, config: TournamentConfig) {
+  await guardDisputedChanges(db,tournamentId);
   const plan = await storedScoringPlan(db, tournamentId);
   if (plan.completedContexts?.length) {
     const { config: previous, pairings } = await readState(db, tournamentId);

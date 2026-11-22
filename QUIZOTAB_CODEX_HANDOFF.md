@@ -143,6 +143,12 @@ GET `completion?contextId=...` as the assigned host (or GET `reopen?contextId=..
 
 The tournament lock serializes lifecycle, assignment and scoring commands. Closure checks release, participant and question coverage, pending reviews and outcome. Knockout ties require the recorded tiebreak; preliminary draws and points rosters do not need a winner. Generic plan edits retain completion markers. Each successful transition inserts a separate tournament-state row under the fixtureEvent prefix; existing events are never updated by the application. These lifecycle records have application-level protection. The database trigger continues to protect score events. A later draft or released draw blocks reopening; downstream adjudication is deferred to Unit 6B. The legacy-only database constraint stays in place.
 
+## Unit 6B — Post-advancement corrections
+
+The owner overview and owner-only adjudication API expose pending competitive conflicts. Under the tournament lock, the room-host decision service compares effective awards, tiebreaks, qualification, seeding and dependent fixtures. An owner may hold proceedings, lift a hold, withdraw unplayed dependent drafts, or uphold an existing released or scored bracket with a reason. The assigned room host retains responsibility for the actual score decision. Consequential changes to a finalized result require reopening and subsequent completion. Rulings are versioned tournament state records written in the same transaction as the action.
+
+The default Neon regression uses rollback fixtures. The focused `npm run test:score-submissions:dev -- --adjudication-only` run also exercises independent commits and archives its unlisted synthetic tournament to retain audit history. The database activation constraint remains in force.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

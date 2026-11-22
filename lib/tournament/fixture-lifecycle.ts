@@ -1,4 +1,5 @@
 import "server-only";
+import { disputes } from "./adjudication";
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -25,7 +26,7 @@ export function hasLaterDraw(pair: Pairing, draw: Pairing[], config: TournamentC
   return draw.some(p => group(p) !== group(pair) && (prior < 0 || order.indexOf(group(p)) < 0 || order.indexOf(group(p)) > prior));
 }
 
-async function snapshot(tx: Db, id: string) {
+export async function lifecycleSnapshot(tx: Db, id: string) {
   const docs = await tx.select({
     key: state.key, value: state.value,
     definition: sql<string>`(case when ${state.key} = 'scoringPlan' then ${state.value} - 'completedContexts' else ${state.value} end)::text`
@@ -41,7 +42,7 @@ async function snapshot(tx: Db, id: string) {
   };
 }
 
-type Snapshot = Awaited<ReturnType<typeof snapshot>>;
+type Snapshot = Awaited<ReturnType<typeof lifecycleSnapshot>>;
 type Roster = Snapshot["plan"]["rosters"][number];
 
 async function requireCompleteCoverage(tx: Db, id: string, roomId: string, contextId: string,
@@ -76,7 +77,7 @@ async function requireCompleteCoverage(tx: Db, id: string, roomId: string, conte
 }
 
 async function lifecycle(tx: Db, id: string, roomId: string, actor: number, contextId: string, action: "read" | "close" | "reopen", command?: Command) {
-  const s = await snapshot(tx, id);
+  const s = await lifecycleSnapshot(tx, id);
   const { config, pairings, plan, configRevision, lifecycleRevision } = s;
   if (!plan.rounds.length) throw new ApiError(409, "Configure a valid scoring plan first.");
   const points = isPointsFormat(config);
@@ -95,6 +96,11 @@ async function lifecycle(tx: Db, id: string, roomId: string, actor: number, cont
   if (action === "close" && completed && command.lifecycleRevision === lifecycleRevision - 1 &&
     lastClose.success && lastClose.data.actor === actor && lastClose.data.contextId === contextId) return view;
   if (command.lifecycleRevision !== lifecycleRevision) throw new ApiError(409, "Lifecycle revision changed. Refresh before continuing.");
+  const pendingCases = await disputes(tx,id);
+  if (pendingCases.some(c => c.restricted && (c.dependent.some(p => p.id === contextId) ||
+      (c.contextId === contextId && (c.last?.action === "hold" || c.last?.action === "uphold"))))) {
+    throw new ApiError(409,"An unresolved adjudication protects this fixture.");
+  }
   if (action === "close") {
     if (completed) return view;
     await requireCompleteCoverage(tx, id, roomId, contextId, s, pair, roster);

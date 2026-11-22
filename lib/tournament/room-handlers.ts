@@ -1,3 +1,4 @@
+import { ownerAdjudication } from "./adjudication";
 import { ApiError, body, route } from "@/lib/api";
 import { authenticated, requireActiveAssignment } from "./room-access";
 import type { Session } from "@/lib/auth/session";
@@ -68,5 +69,12 @@ export function lifecycleHandlers(database: () => Db, session: () => Promise<Ses
       const {id,roomId} = await params;
       return service(database(),id,roomId,await session(),await body(request));
     }),
+  };
+}
+
+export function adjudicationHandlers(database: () => Db, session: () => Promise<Session | null>) {
+  return {
+    GET: route<Context>(async (_, {params}) => ownerAdjudication(database(),(await params).id,await session())),
+    POST: route<Context>(async (request, {params}) => ownerAdjudication(database(),(await params).id,await session(),await body(request))),
   };
 }

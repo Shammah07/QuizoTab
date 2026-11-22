@@ -13,6 +13,7 @@ import { FORMATS, formatDateRange, formatOf, todayStatus, tournamentSubtitle, to
 import type { HostView, ScoreOp } from "@/lib/tournament/store";
 import { ConfirmButton, LinkBox, LiveDot, payload, StatCard, Tabs } from "./bits";
 import { isDashboardTab, type DashboardTab } from "./dashboard-tabs";
+import { AdjudicationPanel } from "./adjudication-panel";
 import { JudgesPanel, type JudgeFields } from "./judges-panel";
 import { PairingsPanel } from "./pairings-panel";
 import { RoomsPanel } from "./rooms-panel";
@@ -179,6 +180,7 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
 
       {shownTab === "overview" && (
         <div className="flex flex-col gap-6">
+          {view.roomAwards && <AdjudicationPanel endpoint={base+"/adjudication"} />}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <StatCard label="Teams registered" value={teams.length} />
             <StatCard label="Scores entered" value={scores.length} tone="live" />

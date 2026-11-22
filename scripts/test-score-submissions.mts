@@ -1,3 +1,4 @@
+import { verifyAdjudication, verifyTiebreakRetirement } from "./adjudication-checks";
 import { verifyLifecycle } from "./lifecycle-checks";
 import { checkSpectators, checkSpectatorRefresh } from "./spectator-checks";
 import { spectatorView } from "@/lib/tournament/spectator";
@@ -21,6 +22,8 @@ const db = drizzle(pg, { schema });
 try {
   await checkSpectatorRefresh();
   await migrate(db, { migrationsFolder: "./drizzle" });
+  await verifyAdjudication(db);
+  await verifyTiebreakRetirement(db);
   for (const format of FORMAT_KEYS) {
     await verifyLifecycle(db,format);
     const f = await scoringFixture(db, format);

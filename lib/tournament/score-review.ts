@@ -6,10 +6,11 @@ import { ApiError } from "@/lib/api";
 import type { Session } from "@/lib/auth/session";
 import type { Db } from "@/lib/db";
 import { teams, tournamentScoreEntries as scores, tournamentScoreEvents as events, users } from "@/lib/db/schema";
+import { disputes } from "./adjudication";
 import { withScoringRoom } from "./room-access";
 import { verifyAttempt } from "./scoring-plan";
 import { STAGE_LABELS } from "./rules";
-import { readState } from "./store";
+import { readState, writeState } from "./store";
 
 const uuid = z.uuid().transform(v => v.toLowerCase());
 const reason = z.string().trim().min(3).max(1000).regex(/[\p{L}\p{N}]/u);
@@ -60,12 +61,26 @@ export function decideRoomScore(db: Db, id: string, roomId: string, session: Ses
     const entry = await roomScore(tx, id, roomId, data.scoreId);
     if (entry.judgeUserId === host.userId) throw new ApiError(403, "Another room host must review your submission.");
     if (!active || entry.status !== "pending") throw new ApiError(409, "Only a pending score in an active tournament can be reviewed.");
-    await verifyAttempt(tx, id, roomId, entry);
+
     const status = data.decision === "approve" ? "approved" : "rejected";
     // A rejected predecessor stays rejected. Only an effective award is superseded.
-    const predecessor = entry.correctionOf && status === "approved"
+    const predecessor = entry.correctionOf
       ? await roomScore(tx, id, roomId, entry.correctionOf) : null;
-    if (predecessor && predecessor.status !== "rejected") {
+    if (predecessor?.status === "approved") {
+      const impact = (await disputes(tx,id)).find(c => c.scoreId === entry.id);
+      if (!impact) throw new ApiError(409,"Correction impact is unavailable.");
+      const needsRuling = impact.dependent.some(p => p.released || p.scored);
+      if (impact.last?.action === "hold" || (status === "approved" && impact.restricted) ||
+          (status === "rejected" && needsRuling && impact.last?.action !== "uphold")) {
+        throw new ApiError(409,"The official result is protected. Refer this correction to the tournament administrator.");
+      }
+      if (status === "approved" && impact.changes.includes("tiebreak")) {
+        const {pairings} = await readState(tx,id);
+        await writeState(tx,id,"pairings",pairings.map(p => p.id === entry.contextId ? {...p,tiebreakWinnerId:null} : p));
+      }
+    }
+    await verifyAttempt(tx, id, roomId, entry, predecessor?.status === "approved");
+    if (status === "approved" && predecessor && predecessor.status !== "rejected") {
       const [original] = await tx.update(scores).set({ status: "superseded" }).where(and(
         roomScope(id, roomId), eq(scores.id, predecessor.id), eq(scores.status, "approved"),
       )).returning({ id: scores.id });
@@ -104,7 +119,7 @@ export function proposeCorrection(db: Db, id: string, roomId: string, session: S
     if (original.status === "approved" && original.points === data.points) throw new ApiError(422, "Corrected points must differ from the approved award.");
     const { contextId, teamId, roundId, questionKey } = original;
     const attempt = { contextId, teamId, roundId, questionKey };
-    await verifyAttempt(tx, id, roomId, { ...attempt, points: data.points });
+    await verifyAttempt(tx, id, roomId, { ...attempt, points: data.points }, original.status === "approved");
     // Rejected revisions are historical too. Their numbers cannot be reused.
     const [last] = await tx.select({ revision: max(scores.revision) }).from(scores).where(and(
       eq(scores.tournamentId, id), eq(scores.contextId, contextId), eq(scores.teamId, teamId),

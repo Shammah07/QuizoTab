@@ -1,3 +1,4 @@
+import { setupBracket, verifyAdjudication, verifyIndependentRaces } from "./adjudication-checks";
 import { verifyLifecycle } from "./lifecycle-checks";
 import { checkSpectators } from "./spectator-checks";
 // Opt-in only. Roll back the whole fixture, including append-only audit events.
@@ -5,7 +6,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Pool } from "@neondatabase/serverless";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import * as schema from "@/lib/db/schema";
 import { FORMAT_KEYS } from "@/lib/tournament/rules";
@@ -19,6 +20,8 @@ const writer = new Pool({ connectionString: urls.pooled, max: 1 });
 const observer = new Pool({ connectionString: urls.direct, max: 1 });
 const db = drizzle(writer, { schema });
 const independent = drizzle(observer, { schema });
+const racesOnly = process.argv.includes("--adjudication-races-only");
+const focused = racesOnly || process.argv.includes("--adjudication-only");
 const rolledBack = new Error("Complete fixture rollback");
 try {
   for (const connection of [db, independent]) {
@@ -33,7 +36,30 @@ try {
       hash: createHash("sha256").update(readFileSync("drizzle/" + e.tag + ".sql")).digest("hex") })));
   }
   console.log("Verified live direct and pooled development targets, journal and enforced engine gate.");
-  for (const format of FORMAT_KEYS) {
+  if (!racesOnly) await assert.rejects(db.transaction(async tx => {
+    await verifyAdjudication(tx);
+    throw rolledBack;
+  }), error => error === rolledBack);
+  if (focused) {
+    const bracket = await db.transaction(tx => setupBracket(tx));
+    try {
+      await verifyIndependentRaces(db,independent,bracket);
+    } finally {
+      // The committed race needs visible fixtures. Retain append-only history;
+      // retire only the newly created, unlisted synthetic tournament and its staff.
+      await db.transaction(async tx => {
+        await tx.update(schema.tournaments).set({status:"archived"}).where(eq(schema.tournaments.id,bracket.id));
+        await tx.update(schema.tournamentRoomStaff).set({revokedAt:new Date()}).where(eq(schema.tournamentRoomStaff.tournamentId,bracket.id));
+      });
+      const [saved] = await independent.select({status:schema.tournaments.status}).from(schema.tournaments).where(eq(schema.tournaments.id,bracket.id));
+      assert.equal(saved.status,"archived");
+      const activeStaff = await independent.select({id:schema.tournamentRoomStaff.id}).from(schema.tournamentRoomStaff)
+        .where(and(eq(schema.tournamentRoomStaff.tournamentId,bracket.id),isNull(schema.tournamentRoomStaff.revokedAt)));
+      assert.equal(activeStaff.length,0);
+      console.log("Archived synthetic race tournament",bracket.id);
+    }
+  }
+  for (const format of focused ? [] : FORMAT_KEYS) {
     let fixtureId = "";
     let lifecycleId = "";
     await assert.rejects(db.transaction(async tx => {

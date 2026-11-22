@@ -11,7 +11,7 @@ import { isPointsFormat, type Format } from "@/lib/tournament/rules";
 // Test only: project the gated read for exactly one synthetic tournament. All
 // locks, membership queries, constraints and writes use the actual adapter.
 // Neither the fixture row nor the database activation constraint is changed.
-export function fixtureAdapter(db: Db, fixtureId: string, failAudit: boolean | "approved" | "lifecycle" = false): Db {
+export function fixtureAdapter(db: Db, fixtureId: string, failAudit: boolean | "approved" | "lifecycle" | "ruling" = false): Db {
   return new Proxy(db, {
     get(target, prop) {
       if (prop !== "transaction") return Reflect.get(target, prop);
@@ -27,7 +27,16 @@ export function fixtureAdapter(db: Db, fixtureId: string, failAudit: boolean | "
             if (table === s.tournamentState) throw new Error("Injected lifecycle marker write failure");
             return inner.update(table);
           };
-          if (method === "insert" && failAudit && failAudit !== "lifecycle") return (table: typeof s.tournamentScoreEvents) => {
+          if (method === "insert" && failAudit === "ruling") return (table: typeof s.tournamentState) => {
+            if (table === s.tournamentState) return {
+              values: (v: typeof table.$inferInsert) => {
+                if (v.key.startsWith("ruling:")) throw new Error("Injected ruling audit failure");
+                return inner.insert(table).values(v);
+              },
+            };
+            return inner.insert(table);
+          };
+          if (method === "insert" && failAudit && failAudit !== "lifecycle" && failAudit !== "ruling") return (table: typeof s.tournamentScoreEvents) => {
             if (table === s.tournamentScoreEvents) return {
               values: (values: typeof table.$inferInsert) => inner.insert(table)
                 .values(failAudit === true || values.eventType === failAudit ? { ...values, actorUserId: -1 } : values),
