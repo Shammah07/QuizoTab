@@ -1,3 +1,4 @@
+import { verifyOperations } from "./operations-checks";
 import { verifyAdjudication, verifyTiebreakRetirement } from "./adjudication-checks";
 import { verifyLifecycle } from "./lifecycle-checks";
 import { checkSpectators, checkSpectatorRefresh } from "./spectator-checks";
@@ -25,6 +26,7 @@ try {
   await verifyAdjudication(db);
   await verifyTiebreakRetirement(db);
   for (const format of FORMAT_KEYS) {
+    await verifyOperations(db,format);
     await verifyLifecycle(db,format);
     const f = await scoringFixture(db, format);
     const { data, submit, id, judges, plan, pairing } = f;

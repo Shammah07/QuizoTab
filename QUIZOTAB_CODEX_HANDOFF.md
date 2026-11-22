@@ -155,6 +155,14 @@ The staff directory at `/staff` lists active room assignments independently of l
 
 Only opaque retry IDs and payload digests persist in tab storage. After a lost response, refresh the room and, if the attempt is still absent, re-enter identical details in the same tab. A changed payload receives a separate ID.
 
+## Unit 6D — Administrator configuration and monitoring
+
+Room operations in the existing owner dashboard reads one repeatable-read snapshot for all rooms. It shows relational active staff assignments, draft and released contexts, effective approved question coverage, pending reviews, closure markers and adjudication blockers. The Unit 6B adjudication panel owns ruling actions. Legacy scoring stays available through the original screens.
+
+The plan editor submits its original revision. The owner transaction locks the tournament, reloads dependencies, checks the revision and validates the plan. Question IDs are stored per round. A team can occupy one room roster per round. Drafts can be prepared while room scoring is disabled. Explicit roster release checks the active tournament, registered members, assigned staff, and scoring limits. Withdrawal is limited to open rosters without any scoring history. Planning and release do not activate the scoring engine.
+
+Run the focused owner UI test with `node --import tsx scripts/test-staff-browser.mts --operations`. It uses an isolated browser profile and synthetic localhost responses. The service and route regressions are included in `npm test`.
+
 ## Later roadmap (not now)
 PPTX upload/rendering, sync to question IDs, more advanced spectator experience, realtime service, verified Snippe payment entitlements, institution profiles, question library/practice analytics, optional buzzer. Ensure current milestone is stable first.
 

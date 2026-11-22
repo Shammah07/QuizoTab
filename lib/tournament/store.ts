@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, desc, eq, inArray, notExists, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { guardDisputedChanges } from "./adjudication";
-import { readScoringPlan } from "./scoring-plan";
+import { readScoringPlan, validRound } from "./scoring-plan";
 import { officialAwards, officialFixture, roundTotals } from "./official-standings";
 import { z } from "zod";
 import { ApiError } from "@/lib/api";
@@ -212,6 +212,15 @@ async function storedScoringPlan(db: Db, id: string) {
 export async function saveConfig(db: Db, tournamentId: string, config: TournamentConfig) {
   await guardDisputedChanges(db,tournamentId);
   const plan = await storedScoringPlan(db, tournamentId);
+  if (plan.rounds.length) {
+    const {config:prior} = await readState(db,tournamentId);
+    if (plan.rounds.some(r=>!validRound(config,r)) || prior.format!==config.format ||
+        plan.rounds.some(r=>{
+          const before=prior.rounds.find(round=>round.id===r.id);
+          const after=config.rounds.find(round=>round.id===r.id);
+          return before?.stage!==after?.stage || before?.match!==after?.match;
+        })) throw new ApiError(409,"Update the affected room question plans before changing their round definitions.");
+  }
   if (plan.completedContexts?.length) {
     const { config: previous, pairings } = await readState(db, tournamentId);
     const changed = plan.completedContexts.some(id => {
@@ -300,6 +309,7 @@ export async function updateTeam(db: Db, tournamentId: string, teamId: unknown, 
 export async function deleteTeam(db: Db, tournamentId: string, teamId: unknown) {
   if (!looksLikeId(teamId)) return false;
   const plan = await storedScoringPlan(db,tournamentId);
+  if (plan.rosters.some(r=>r.teamIds.includes(teamId))) throw new ApiError(409,"Remove this team from its room roster first.");
   if (plan.completedContexts?.length) {
     const closed = new Set(plan.completedContexts);
     const { pairings } = await readState(db,tournamentId);
@@ -492,7 +502,9 @@ export async function tournamentForGuestCode(db: Db, code: string) {
 
 // Clears every team, score and pairing of a tournament; its settings, rooms and judges are kept
 export async function resetTournament(db: Db, tournamentId: string) {
-  if ((await storedScoringPlan(db,tournamentId)).completedContexts?.length) throw new ApiError(409,"Completed contexts must be retained.");
+  const plan=await storedScoringPlan(db,tournamentId);
+  if (plan.rosters.length) throw new ApiError(409,"Remove room rosters before clearing tournament teams.");
+  if (plan.completedContexts?.length) throw new ApiError(409,"Completed contexts must be retained.");
   await db.delete(teams).where(eq(teams.tournamentId, tournamentId));
   await writeState(db, tournamentId, "scores", []);
   await writeState(db, tournamentId, "pairings", []);

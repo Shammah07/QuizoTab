@@ -1,6 +1,6 @@
 import "server-only";
 import { guardDisputedChanges } from "./adjudication";
-import { and, eq, inArray, max, ne, or, sum } from "drizzle-orm";
+import { and, eq, inArray, max, ne, or, sql, sum } from "drizzle-orm";
 import { z } from "zod";
 import { ApiError } from "@/lib/api";
 import type { Db } from "@/lib/db";
@@ -15,9 +15,9 @@ const question = z.strictObject({ id: key, minPoints: points, maxPoints: points 
 const roster = z.strictObject({
   id: key, roomId: key, roundId: key, released: z.boolean(), teamIds: z.array(z.uuid()).min(1).max(2000),
 });
-const planSchema = z.strictObject({
+export const planSchema = z.strictObject({
   completedContexts: z.array(key).max(2000).optional(),
-  rounds: z.array(z.strictObject({ id: key, questions: z.array(question).min(1).max(500) })).min(1).max(500),
+  rounds: z.array(z.strictObject({ id: key, questions: z.array(question).min(1).max(500) })).max(500),
   rosters: z.array(roster).max(2000),
 });
 type Plan = z.infer<typeof planSchema>;
@@ -37,6 +37,25 @@ export function validRound(config: TournamentConfig, round: Plan["rounds"][numbe
   return round.questions.every(q => q.minPoints <= q.maxPoints) &&
     round.questions.reduce((n, q) => n + q.minPoints, 0) >= range.min &&
     round.questions.reduce((n, q) => n + q.maxPoints, 0) <= range.max;
+}
+
+type CompetitionSetup = {config:TournamentConfig;plan:ReturnType<typeof readScoringPlan>;status:string;
+  registered:{id:string}[];rooms:{id:string}[];assignments:{roomId:string;role:string}[]};
+
+export function contextReadiness(data:CompetitionSetup,c:{roomId:string|null;members:string[];rounds:TournamentConfig["rounds"]} ) {
+  const reasons:string[] = [];
+  if (data.status!=="active") reasons.push("Tournament must be active.");
+  if (!data.rooms.some(r=>r.id===c.roomId)) reasons.push("Assign a valid room.");
+  const staff = data.assignments.filter(a=>a.roomId===c.roomId);
+  if (!staff.some(a=>a.role==="room_host")) reasons.push("Assign a room host.");
+  if (!staff.some(a=>a.role==="judge")) reasons.push("Assign a room judge.");
+  const ids = new Set(data.registered.map(t=>t.id));
+  if (!c.members.length || new Set(c.members).size!==c.members.length || c.members.some(id=>!ids.has(id))) reasons.push("Assign eligible registered teams.");
+  if (!c.rounds.length || c.rounds.some(r=>{
+    const p=data.plan.rounds.find(p=>p.id===r.id);
+    return !p || !validRound(data.config,p);
+  })) reasons.push("Configure questions within the applicable round limits.");
+  return reasons;
 }
 
 // Called inside the owner PATCH transaction after taking the tournament lock.
@@ -71,15 +90,15 @@ export async function saveScoringPlan(tx: Db, id: string, input: unknown) {
   }
   const roomIds = new Set((await storedRooms(tx, id)).map(r => r.id));
   const teamIds = new Set((await tx.select({ id: teams.id }).from(teams).where(eq(teams.tournamentId, id))).map(t => t.id));
-  const released = new Set<string>();
+  const assigned = new Set<string>();
   for (const r of plan.rosters) {
-    if (!roomIds.has(r.roomId) || !plan.rounds.some(round => round.id === r.roundId) || !unique(r.teamIds)) {
+    if (!config.rounds.some(round=>round.id===r.roundId && round.stage===(config.format==="league" ? "league" : "quiz")) || !roomIds.has(r.roomId) || !plan.rounds.some(round => round.id === r.roundId) || !unique(r.teamIds)) {
       throw new ApiError(422, "Invalid roster room, round or team list.");
     }
     for (const team of r.teamIds) {
       const slot = JSON.stringify([r.roundId, team]);
-      if (!teamIds.has(team) || (r.released && released.has(slot))) throw new ApiError(422, "Invalid or overlapping roster membership.");
-      if (r.released) released.add(slot);
+      if (!teamIds.has(team) || assigned.has(slot)) throw new ApiError(422, "Invalid or overlapping roster membership.");
+      assigned.add(slot);
     }
   }
   // Preserve the meaning of recorded awards, while allowing the owner to
@@ -102,7 +121,7 @@ export async function saveScoringPlan(tx: Db, id: string, input: unknown) {
       const oldRoster = original.data.rosters.find(r => r.id === attempt.context);
       if (oldRoster) {
         const next = plan.rosters.find(r => r.id === oldRoster.id);
-        if (!next || next.roomId !== oldRoster.roomId || next.roundId !== attempt.round || !next.teamIds.includes(attempt.team) ||
+        if (!next || !isDeepStrictEqual(next,oldRoster) || !next.teamIds.includes(attempt.team) ||
             plan.rosters.some(r => r.id !== next.id && r.roundId === next.roundId && r.released && r.teamIds.includes(attempt.team))) {
           throw new ApiError(409, "A scored team must retain its original room roster for the round.");
         }
@@ -110,7 +129,7 @@ export async function saveScoringPlan(tx: Db, id: string, input: unknown) {
     }
   }
   await tx.insert(tournamentState).values({ tournamentId: id, key: "scoringPlan", value: plan })
-    .onConflictDoUpdate({ target: [tournamentState.tournamentId, tournamentState.key], set: { value: plan, updatedAt: new Date() } });
+    .onConflictDoUpdate({ target: [tournamentState.tournamentId, tournamentState.key], set: { value: plan, updatedAt: sql`greatest(clock_timestamp(), ${tournamentState.updatedAt} + interval '1 microsecond')` } });
 }
 
 export async function verifyAttempt(tx: Db, id: string, roomId: string, attempt: {

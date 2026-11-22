@@ -1,3 +1,4 @@
+import { readOperations, changeOperations } from "./room-operations";
 import { ownerAdjudication } from "./adjudication";
 import { ApiError, body, route } from "@/lib/api";
 import { authenticated, requireActiveAssignment } from "./room-access";
@@ -77,5 +78,12 @@ export function adjudicationHandlers(database: () => Db, session: () => Promise<
   return {
     GET: route<Context>(async (_, {params}) => ownerAdjudication(database(),(await params).id,await session())),
     POST: route<Context>(async (request, {params}) => ownerAdjudication(database(),(await params).id,await session(),await body(request))),
+  };
+}
+
+export function operationsHandlers(database:()=>Db,session:()=>Promise<Session|null>) {
+  return {
+    GET:route<Context>(async (_,{params})=>readOperations(database(),(await params).id,await session())),
+    POST:route<Context>(async (req,{params})=>changeOperations(database(),(await params).id,await session(),await body(req))),
   };
 }

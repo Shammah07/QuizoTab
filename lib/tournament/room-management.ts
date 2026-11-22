@@ -11,8 +11,8 @@ import { withRoomOwner } from "./room-access";
 import { guardDisputedChanges } from "./adjudication";
 import { hasLaterDraw } from "./fixture-lifecycle";
 import { officialAwards, officialFixture, roundTotals } from "./official-standings";
-import { readScoringPlan } from "./scoring-plan";
-import { computeStandings, firstKnockoutStage, knockoutStagesFrom, prelimMatches, normalizePairings, type Pairing, type Room } from "./rules";
+import { contextReadiness, readScoringPlan } from "./scoring-plan";
+import { computeStandings, firstKnockoutStage, knockoutStagesFrom, prelimMatches, normalizePairings, stageRoundsFor, type TournamentConfig, type Pairing, type Room } from "./rules";
 import { readState, storedRooms, writeState } from "./store";
 
 const roomId = z.string().min(1).max(80);
@@ -27,7 +27,7 @@ const command = z.discriminatedUnion("action", [
 ]);
 export type RoomCommand = z.infer<typeof command>;
 
-async function roomSetup(tx: Db, id: string) {
+export async function roomSetup(tx: Db, id: string) {
   const rooms = await storedRooms(tx, id);
   const assignments = await tx.select({ id: staff.id, role: staff.role, roomId: staff.roomId, name: users.name, email: users.email })
     .from(staff).innerJoin(users, eq(users.id, staff.userId))
@@ -85,38 +85,56 @@ export async function saveRoomPairings(tx: Db, id: string, proposed: unknown, ex
     }
     const awards = await officialAwards(tx,id);
     const registered = await tx.select({ id: teams.id, name: teams.name }).from(teams).where(eq(teams.tournamentId,id));
-    const prelim = config.format === "championship" ? prelimMatches(config) : [];
-    const stages = knockoutStagesFrom(firstKnockoutStage(config.format === "championship" ? config.qualificationCount : registered.length));
-    const groups: string[] = [...prelim,...stages];
-    const group = (p: Pairing) => p.stage === "preliminary" ? p.matchLabel ?? "" : p.stage;
-    const refuse = () => { throw new ApiError(409,"Complete and release the prerequisite fixtures before advancing eligible teams."); };
-    if (next.some(p => !groups.includes(group(p))) || new Set(next.map(p => p.id)).size !== next.length) refuse();
-    const last = Math.max(...next.map(p => groups.indexOf(group(p))));
-    let eligible = registered.map(t => t.id);
-    for (let i=0; i<=last; i++) {
-      const fixtures = next.filter(p => group(p) === groups[i]);
-      if (i === prelim.length && prelim.length) eligible = computeStandings(registered,roundTotals(awards),
-        config.rounds.filter(r => r.stage === "preliminary")).slice(0,config.qualificationCount).map(t => t.id);
-      const entrants = fixtures.flatMap(p => [p.teamAId,p.teamBId]).filter((id): id is string => !!id);
-      if (new Set(entrants).size !== entrants.length || entrants.some(id => !eligible.includes(id))) refuse();
-      if (i === last) break;
-      if (!fixtures.length || fixtures.length !== Math.ceil(eligible.length/2) || entrants.length !== eligible.length ||
-          !isDeepStrictEqual(fixtures,pairings.filter(p => group(p) === groups[i]))) refuse();
-      const results = fixtures.map(p => officialFixture(p,config,plan,awards));
-      if (results.some(r => !r.complete)) refuse();
-      if (i >= prelim.length) {
-        eligible = results.flatMap(r => r.winnerId ? [r.winnerId] : []);
-        if (eligible.length !== results.length) refuse();
+    validateDrawDependencies(config,next,pairings,registered,awards,plan);
+    const releases=next.filter(p=>p.released && !pairings.some(old=>old.id===p.id && old.released &&
+      old.roomId===p.roomId && old.stage===p.stage && old.matchLabel===p.matchLabel && old.teamAId===p.teamAId && old.teamBId===p.teamBId));
+    if (releases.length) {
+      const setup=await roomSetup(tx,id);
+      const [t]=await tx.select({status:tournaments.status}).from(tournaments).where(eq(tournaments.id,id));
+      for (const p of releases) {
+        const reasons=contextReadiness({...setup,config,plan,registered,status:t.status},{roomId:p.roomId ?? null,
+          members:[p.teamAId,p.teamBId].filter((id):id is string=>!!id),rounds:stageRoundsFor(config,p.stage,p.matchLabel)});
+        if (reasons.length) throw new ApiError(409,reasons.join(" "));
       }
     }
   }
   await writeState(tx, id, "pairings", next);
 }
 
+export function validateDrawDependencies(config: TournamentConfig, next: Pairing[], pairings: Pairing[],
+  registered: {id:string;name:string}[], awards: Awaited<ReturnType<typeof officialAwards>>, plan: ReturnType<typeof readScoringPlan>) {
+  const prelim = config.format === "championship" ? prelimMatches(config) : [];
+  const stages = knockoutStagesFrom(firstKnockoutStage(config.format === "championship" ? config.qualificationCount : registered.length));
+  const groups: string[] = [...prelim,...stages];
+  const group = (p: Pairing) => p.stage === "preliminary" ? p.matchLabel ?? "" : p.stage;
+  const refuse = () => { throw new ApiError(409,"Complete and release the prerequisite fixtures before advancing eligible teams."); };
+  if (next.some(p => !groups.includes(group(p))) || new Set(next.map(p => p.id)).size !== next.length) refuse();
+  const last = Math.max(...next.map(p => groups.indexOf(group(p))));
+  let eligible = registered.map(t => t.id);
+  for (let i=0; i<=last; i++) {
+    const fixtures = next.filter(p => group(p) === groups[i]);
+    if (i === prelim.length && prelim.length) eligible = computeStandings(registered,roundTotals(awards),
+      config.rounds.filter(r => r.stage === "preliminary")).slice(0,config.qualificationCount).map(t => t.id);
+    const entrants = fixtures.flatMap(p => [p.teamAId,p.teamBId]).filter((id): id is string => !!id);
+    if (new Set(entrants).size !== entrants.length || entrants.some(id => !eligible.includes(id))) refuse();
+    if (i === last) break;
+    if (!fixtures.length || fixtures.length !== Math.ceil(eligible.length/2) || entrants.length !== eligible.length ||
+        !isDeepStrictEqual(fixtures,pairings.filter(p => group(p) === groups[i]))) refuse();
+    const results = fixtures.map(p => officialFixture(p,config,plan,awards));
+    if (results.some(r => !r.complete)) refuse();
+    if (i >= prelim.length) {
+      eligible = results.flatMap(r => r.winnerId ? [r.winnerId] : []);
+      if (eligible.length !== results.length) refuse();
+    }
+  }
+}
+
 async function deleteRoom(tx: Db, id: string, roomId: string) {
   const [score] = await tx.select({ id: tournamentScoreEntries.id }).from(tournamentScoreEntries)
     .where(and(eq(tournamentScoreEntries.tournamentId, id), eq(tournamentScoreEntries.roomId, roomId))).limit(1);
   if (score) throw new ApiError(409, "This room has scoring history and must be kept.");
+  const [doc] = await tx.select({value:tournamentState.value}).from(tournamentState).where(and(eq(tournamentState.tournamentId,id),eq(tournamentState.key,"scoringPlan")));
+  if (readScoringPlan(doc?.value).rosters.some(r=>r.roomId===roomId)) throw new ApiError(409,"Remove this room’s roster references first.");
   const { pairings } = await readState(tx, id);
   if (pairings.some(p => p.roomId === roomId && p.released)) throw new ApiError(409, "A released pairing still uses this room.");
   if (pairings.some(p => p.roomId === roomId)) {

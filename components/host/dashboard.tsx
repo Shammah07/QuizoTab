@@ -16,6 +16,7 @@ import { isDashboardTab, type DashboardTab } from "./dashboard-tabs";
 import { AdjudicationPanel } from "./adjudication-panel";
 import { JudgesPanel, type JudgeFields } from "./judges-panel";
 import { PairingsPanel } from "./pairings-panel";
+import { RoomOperationsPanel } from "./room-operations-panel";
 import { RoomsPanel } from "./rooms-panel";
 import { ScoresPanel } from "./scores-panel";
 import { SettingsPanel } from "./settings-panel";
@@ -69,7 +70,7 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
 
   // Saves one or more documents; the answer is the whole fresh view
   async function patch(data: Partial<{ config: TournamentConfig; pairings: Pairing[]; rooms: Room[]; judges: Judge[] }>) {
-    const body = data.pairings ? { ...data, expectedPairings: view.pairings } : data;
+    const body = { ...data, ...(data.pairings && {expectedPairings:view.pairings}), ...(data.config && {expectedConfig:view.config}) };
     const result = await api<HostView>(base, { method: "PATCH", body });
     if (!result.ok) return result.error;
     setView(payload(result));
@@ -133,6 +134,7 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
     { key: "scores", label: "Scores", count: pending },
     ...(usesDraw ? [{ key: "draw", label: "Draw" }] : []),
     { key: "rooms", label: "Rooms" },
+    { key: "operations", label: "Room operations" },
     { key: "judges", label: "Judges", count: view.judges.length },
     { key: "share", label: "Share" },
   ];
@@ -231,6 +233,8 @@ export function Dashboard({ initial, initialTab, audienceUrl, judgeUrl }: Props)
       {shownTab === "draw" && usesDraw && <PairingsPanel config={config} teams={teams} scores={view.roomAwards ?? scores.filter(s => s.approved)} fixtureResults={view.fixtureResults} pairings={view.pairings} rooms={view.rooms} judges={view.judges} onPairingsChange={(pairings) => patch({ pairings })} onConfigChange={(next) => patch({ config: next })} />}
 
       {shownTab === "rooms" && <RoomsPanel endpoint={`${base}/rooms`} judges={view.judges} onSaved={load} />}
+
+      {shownTab === "operations" && <RoomOperationsPanel endpoint={base+"/operations"} adjudication={base+"/adjudication"}/>}
 
       {shownTab === "judges" && <JudgesPanel judges={view.judges} judgeUrl={judgeUrl} onAdd={addJudge} onRemove={removeJudge} />}
 

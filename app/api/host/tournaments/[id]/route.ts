@@ -1,11 +1,12 @@
+import { isDeepStrictEqual } from "node:util";
 import { ApiError, body, requireUser, route } from "@/lib/api";
 import { db, transactionDb } from "@/lib/db";
 import { withRoomOwner } from "@/lib/tournament/room-access";
 import { saveRoomPairings } from "@/lib/tournament/room-management";
-import { saveScoringPlan } from "@/lib/tournament/scoring-plan";
+import { applyPlanCommand } from "@/lib/tournament/room-operations";
 import { hostTournament } from "@/lib/tournament/api-helpers";
 import { configProblem, normalizeConfig, normalizeJudges } from "@/lib/tournament/rules";
-import { deleteTournament, hostView, saveConfig, writeState } from "@/lib/tournament/store";
+import { deleteTournament, hostView, readState, saveConfig, writeState } from "@/lib/tournament/store";
 
 type Context = RouteContext<"/api/host/tournaments/[id]">;
 
@@ -23,13 +24,15 @@ export const PATCH = route<Context>(async (request, { params }) => {
   if ("rooms" in data) throw new ApiError(409, "Refresh the dashboard and use the room editor.");
   await withRoomOwner(transactionDb(), tournament.id, user, async tx => {
     if ("config" in data) {
+      const current=await readState(tx,tournament.id);
+      if (!isDeepStrictEqual(data.expectedConfig,current.config)) throw new ApiError(409,"Tournament settings changed. Reload before saving.");
       const config = normalizeConfig(data.config);
       const problem = configProblem(config);
       if (problem) throw new ApiError(400, problem);
       await saveConfig(tx, tournament.id, config);
     }
     if ("pairings" in data) await saveRoomPairings(tx, tournament.id, data.pairings, data.expectedPairings);
-    if ("scoringPlan" in data) await saveScoringPlan(tx, tournament.id, data.scoringPlan);
+    if ("scoringPlan" in data) await applyPlanCommand(tx,tournament.id,{action:"save",revision:data.revision,plan:data.scoringPlan});
     if ("judges" in data) await writeState(tx, tournament.id, "judges", normalizeJudges(data.judges));
   });
   return hostView(db(), tournament);

@@ -1,3 +1,4 @@
+import { readOperations } from "@/lib/tournament/room-operations";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -103,6 +104,8 @@ export async function verifyAdjudication(db:Db) {
   const cmd = async (action:string) => ({action,version:(await current()).version,scoreId:conflicting.scoreId,
     reason:"Synthetic competition ruling",requestId:randomUUID()});
   const draftCase = await current();
+  const monitor=await readOperations(fixtureAdapter(db,b.id),b.id,b.admin);
+  assert.ok(monitor.rooms.find(r=>r.id==="hall")?.contexts.find(c=>c.id===draft.id)?.disputes.some(d=>d.scoreId===conflicting.scoreId));
   assert.ok(draftCase.changes.includes("downstream participants"));
   assert.ok(draftCase.dependent[0].slotChange.proposed.includes(b.teams[0].id));
   const hold = await cmd("hold");
