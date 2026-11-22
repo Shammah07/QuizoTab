@@ -45,7 +45,7 @@ for (const wrong of [url(true), url().replace(pins.runtimeRole, "different"), ur
   url().replace("ep-fixture", "ep-other"), url()+"&host=other", url()+"&sslmode=disable",
   url().replace("=require","=disable"), url()+"&channel_binding=disable"]) assert.throws(() => pilotUrl(wrong, pins));
 assert.throws(() => pilotUrl(url(true).replace(pins.setupRole, pins.runtimeRole), pins, true));
-for (const key of ["DATABASE_URL","DATABASE_URL_UNPOOLED","PGOPTIONS","PGUSER","PGSERVICE","NEON_DATABASE_URL","NODE_TLS_REJECT_UNAUTHORIZED"])
+for (const key of ["DATABASE_URL","DATABASE_URL_UNPOOLED","DIRECT_URL","DB_HOST","PRISMA_DATABASE_URL","PGOPTIONS","PGUSER","PGSERVICE","NEON_DATABASE_URL","NODE_TLS_REJECT_UNAUTHORIZED"])
   assert.throws(() => rejectInherited({[key]:"unexpected"}));
 
 // Exercise the actual identity SELECT against an in-memory PostgreSQL engine, including absent GUCs.

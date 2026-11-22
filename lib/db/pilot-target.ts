@@ -27,7 +27,7 @@ export function readPins(raw: unknown): PilotPins {
 }
 
 export function rejectInherited(env:Record<string,string|undefined>) {
-  if(Object.keys(env).some(k=>/^(?:DATABASE_URL|POSTGRES|PG|NEON_|DEV_NEON_|QUIZOTAB_PILOT|NODE_TLS_REJECT_UNAUTHORIZED|NODE_EXTRA_CA_CERTS)/i.test(k)))
+  if(Object.keys(env).some(k=>/^(?:DATABASE_|DIRECT_URL|DB_|PRISMA_DATABASE_URL|POSTGRES|PG|NEON_|DEV_NEON_|QUIZOTAB_PILOT|NODE_TLS_REJECT_UNAUTHORIZED|NODE_EXTRA_CA_CERTS)/i.test(k)))
     throw new Error("Remove inherited database, pilot or TLS settings before launching.");
 }
 
