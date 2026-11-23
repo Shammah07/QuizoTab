@@ -89,6 +89,24 @@ GRANT INSERT ON TABLE public.tournament_score_events TO quizotab_pilot_app;
 
 Drizzle emits explicit insert column lists, including defaulted fields. Its full-row SELECTs, RETURNING projections and the idle-judge NOT EXISTS subqueries also affect read privileges. The legacy judge cleanup in lib/tournament/store.ts uses an unqualified Drizzle select() in its event subquery, expanding to every mapped event column even though its predicate only uses actor_user_id. Narrowing that SELECT would require an application change. The raw answer INSERT in lib/quiz/engine.ts names seven columns and can use column-scoped privileges. Existing FK actions handle cascades without runtime DELETE on every child.
 
+## Stage 6E-D4A room-scoring permission procedure
+
+The two statements in the second SQL block are the full change from the verified legacy profile. `room-scoring.ts` inserts an entry and its submission event. `score-review.ts` inserts correction revisions, updates the four listed decision columns, supersedes an earlier award by updating its status, and inserts decision and supersession events. Drizzle names all mapped insertable columns, including defaulted ones. Existing SELECT privileges cover lookups and RETURNING. Events remain append-only.
+
+The following commands target the independently pinned pilot. Stage 6E-D4A authorizes preparation and local tests. A live preflight and application are a separate operator decision.
+
+```powershell
+npm run pilot:scoring:v1:preflight -- "C:\QuizoTabPilot\pins.json" "C:\QuizoTabPilot\setup.env"
+npm run pilot:scoring:v1:apply -- "C:\QuizoTabPilot\pins.json" "C:\QuizoTabPilot\setup.env"
+npm run pilot:scoring:v1:verify -- "C:\QuizoTabPilot\pins.json" "C:\QuizoTabPilot\setup.env"
+```
+
+Preflight requires the exact legacy profile, the installed closed admission policy, an empty allowlist and zero room tournaments, score entries and events. Apply repeats those checks inside the direct setup transaction, acquires the pilot procedure lock and locks the admission and scoring tables used for readiness checks. Run it during a pause in other administrative ACL or DDL work. It issues the two reviewed grants and rechecks the complete permission matrix, ownership, protected schemas, journal, upgrade hash and trigger definitions before commit. A failed check aborts the transaction. Admission and staff authorization remain separate from database privileges.
+
+After an interrupted connection, run the scoring verifier in a new process. It checks the closed policy, reports data counts, and classifies effective permissions. A verified `full` result with zero missing and zero excess establishes that the approved privileges are present. A verified `legacy` result establishes that the prior profile is still in effect. A partial or excessive profile or any failed protection check exits nonzero and requires investigation. Resolve the result before considering any retry. Apply refuses a full or partial baseline. The original admission verifier continues to require the legacy privilege profile.
+
+The shared runtime credential and disabled RLS place per-tournament authorization in the application. The scoring grants permit direct writes within their SQL scope even while admission is closed. Any subsequent opening or host approval requires its own authorization. Recovery is read-only. If scoring data already exists, retain it and review its dependencies before considering any separately authorized privilege change.
+
 ## Privilege boundaries
 
 Existing CONNECT on quizotab_pilot and PUBLIC USAGE on public cover connection and name lookup. The eight public sequences belong to identity columns. Generated identity defaults and INSERT RETURNING need no direct sequence privileges. The serial sequence in drizzle belongs exclusively to migration bookkeeping. The application calls no nextval, currval or setval.

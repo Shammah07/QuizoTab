@@ -9,12 +9,14 @@ import { drizzle as pooled } from "drizzle-orm/neon-serverless";
 import { pilotUrl, probeIdentity, readPins, rejectInherited, verifyPilot } from "../lib/db/pilot-target";
 import { PilotMigrationRefusal, preparePilotSchema, requireApprovedPins } from "./pilot-migration";
 
+import { pilotScorePermissions } from "./pilot-score-permissions";
 import { pilotAdmission } from "./pilot-upgrade";
 
 async function main() {
   const [mode, manifest, credentials, ...extra]=process.argv.slice(2);
   const admission = mode === "admission-preflight" || mode === "admission-upgrade" || mode === "admission-verify";
-  const migration = admission || mode === "migrate" || mode === "migration-preflight";
+  const scoring = mode === "scoring-preflight" || mode === "scoring-apply" || mode === "scoring-verify";
+  const migration = admission || scoring || mode === "migrate" || mode === "migration-preflight";
   if ((!migration && !["start","verify-setup"].includes(mode)) || !manifest || !credentials || extra.length ||
       !isAbsolute(manifest) || !isAbsolute(credentials) || realpathSync(manifest)===realpathSync(credentials))
     throw new Error("Invalid pilot inputs.");
@@ -41,6 +43,11 @@ async function main() {
   try {
     await verifyPilot(pins,()=>probeIdentity(drizzle(neon(url))),()=>pooled(pool).transaction(tx=>probeIdentity(tx)),
       setup?()=>probeIdentity(pooled(setup)):undefined);
+    if (scoring && setup) {
+      const result = await pilotScorePermissions(pooled(setup), pins, mode);
+      console.log("Verified " + result.profile + " permission profile (missing=0 excess=0).", result.counts);
+      return;
+    }
     if (admission && setup) {
       await pilotAdmission(pooled(setup), pins, mode);
       console.log("Verified pilot " + mode + " completed.");

@@ -7,7 +7,7 @@ import type { PgliteQueryResultHKT } from "drizzle-orm/pglite";
 import { requirePilotSession, type PilotPins } from "../lib/db/pilot-target";
 import { loadApproved, PilotMigrationRefusal } from "./pilot-migration";
 
-type Database = PgDatabase<NeonQueryResultHKT | PgliteQueryResultHKT>;
+export type Database = PgDatabase<NeonQueryResultHKT | PgliteQueryResultHKT>;
 export type AdmissionMode = "admission-preflight" | "admission-upgrade" | "admission-verify";
 const version = "0001_room_admission";
 const hash = "d54a4e515c2c6464a7e610252f3f00e2049fa3af6f8ffb0662b3de4f314ffb7f";
@@ -20,7 +20,28 @@ const empty = (v: unknown) => Array.isArray(v) && v.length === 0;
 const setup = "quizotab_pilot_setup";
 const runtime = "quizotab_pilot_app";
 
-async function inspect(db: Database, upgraded: boolean) {
+function approvedAdmissionSQL() {
+  const script = readFileSync("pilot-upgrades/" + version + ".sql","utf8");
+  check(digest(script)===hash,"upgrade SQL hash");
+  return script;
+}
+
+export async function inspectScoringPermissions(db: Database) {
+  approvedAdmissionSQL();
+  const profile = await inspect(db, true, "classify");
+  // Effective rights alone cannot distinguish a direct runtime grant from PUBLIC.
+  const publicAccess = await db.execute(sql`select 1 from pg_class c
+    cross join lateral aclexplode(c.relacl) acl
+    where c.oid in ('public.tournament_score_entries'::regclass,'public.tournament_score_events'::regclass)
+    and acl.grantee=0
+    union all select 1 from pg_attribute a cross join lateral aclexplode(a.attacl) acl
+    where a.attrelid in ('public.tournament_score_entries'::regclass,'public.tournament_score_events'::regclass)
+    and acl.grantee=0 limit 1`);
+  if (publicAccess.rows.length) throw new PilotMigrationRefusal("Unexpected PUBLIC scoring privileges.");
+  return profile;
+}
+
+async function inspect(db: Database, upgraded: boolean, permissionCheck: "legacy" | "classify" = "legacy") {
   const rows = async (q: string) => (await db.execute(sql.raw(q))).rows;
   const catalog = await rows(read("scripts/pilot-catalog.sql"));
   // Generated from unmodified canonical files, and again after the reviewed closed upgrade.
@@ -50,7 +71,14 @@ async function inspect(db: Database, upgraded: boolean) {
   check(history.length===batch.length && history.every((r,i)=> Number(r.id)===i+1 && r.hash===batch[i].hash &&
     Number(r.created_at)===batch[i].folderMillis),"canonical migration history");
   const legacy = profiles.find(p=>p.profile==="legacy");
-  check(legacy && Number(legacy.missing)===0 && Number(legacy.excess)===0 && !maintain.length && !builtins.length,"legacy privilege matrix");
+  const full = profiles.find(p=>p.profile==="full");
+  check(legacy && full && !maintain.length && !builtins.length,"effective privileges");
+  const matches = (p: typeof full) => Number(p.missing)===0 && Number(p.excess)===0;
+  const profile = matches(legacy) ? "legacy" : matches(full) ? "full" : "unexpected";
+  if (permissionCheck === "legacy") check(profile==="legacy","legacy privilege matrix");
+  if (profile==="unexpected") throw new PilotMigrationRefusal(
+    "Unexpected partial or excessive permissions. Legacy missing=" + legacy.missing + " excess=" + legacy.excess +
+    ", full missing=" + full.missing + " excess=" + full.excess + ".");
   const guards = await rows(`select
     has_database_privilege('quizotab_pilot_app',current_database(),'CONNECT WITH GRANT OPTION') or
     has_schema_privilege('quizotab_pilot_app','public','USAGE WITH GRANT OPTION') as grantable, has_parameter_privilege('quizotab_pilot_app','session_replication_role','SET') as bypass,
@@ -62,7 +90,7 @@ async function inspect(db: Database, upgraded: boolean) {
       exists(select from public.tournaments where scoring_engine_version <> 'legacy') or
       exists(select from public.tournament_score_entries) or exists(select from public.tournament_score_events) as room_records`);
     check(state[0].can_install && !state[0].room_records,"setup permissions or existing room-scoring records");
-    return;
+    return profile;
   }
   const unexpected = await rows(`select 1 from pg_namespace n cross join lateral
     aclexplode(coalesce(nspacl,acldefault('n',nspowner))) a where nspname='pilot_admission' and a.grantee<>nspowner
@@ -77,11 +105,11 @@ async function inspect(db: Database, upgraded: boolean) {
   check(policy.length===1 && policy[0].singleton===true && policy[0].enabled===false,"closed policy");
   const records = await rows("select version,sha256 from pilot_admission.upgrades");
   check(records.length===1 && records[0].version===version && records[0].sha256===hash,"upgrade history");
+  return profile;
 }
 
 export async function pilotAdmission(db: Database, pins: PilotPins, mode: AdmissionMode) {
-  const script = readFileSync("pilot-upgrades/" + version + ".sql","utf8");
-  check(digest(script)===hash,"upgrade SQL hash");
+  const script = approvedAdmissionSQL();
   await db.transaction(async tx=>{
     await tx.execute(sql`set local search_path = pg_catalog`);
     await requirePilotSession(tx,pins,pins.setupRole);
