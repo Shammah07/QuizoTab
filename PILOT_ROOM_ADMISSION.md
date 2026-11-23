@@ -46,6 +46,16 @@ The catalog fingerprints cover the canonical PostgreSQL definitions, including t
 
 ### Controlled pilot-host commands
 
+**Preparing the D5B account.** After separate authorization for account creation, use the operator launcher from the isolated checkout. The final argument explicitly selects the only supported address.
+
+```powershell
+npm run pilot:fixture:register -- "C:\QuizoTabPilot\pins.json" "C:\QuizoTabPilot\runtime.env" "room-host-d5b@pilot.invalid"
+```
+
+Open the private link printed in the local terminal and enter a unique pilot password saved outside Git. The link is a temporary credential. Keep it on the operator workstation, with no port forwarding or shared terminal logs. The listener binds to a random port on IPv4 loopback, expires after five minutes and accepts one registration attempt. The form takes only a password. The launcher fixes the display name to `QuizoTab Pilot D5B Synthetic Host` and checks the approved pilot target and runtime role again inside the registration transaction.
+
+The normal registration service hashes the password and records the account as verified at creation. The fixture makes no email delivery or session-cookie call. Use the ordinary pilot login for subsequent authenticated work. A duplicate attempt preserves the existing account and password. If the response is lost, verify the exact account by a separate pinned read-only check before retrying. Account creation leaves host approval, allowlisting and opening admission as separate decisions.
+
 Stage 6E-D5A prepares these commands for separate operator authorization. Run them from the isolated pilot checkout with the external pins and setup credential file. The CLI verifies the target and roles, and the direct setup transaction rechecks identity, the installed upgrade and catalog fingerprint, the journal, both triggers, ownership and the complete scoring privilege profile. The earlier scoring verifier expects a closed policy. The host verifier can inspect either policy state.
 
 | npm script | Additional arguments after the pins and credentials | Result |

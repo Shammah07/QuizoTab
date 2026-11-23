@@ -17,17 +17,20 @@ async function main() {
   const [mode, manifest, credentials, ...extra]=process.argv.slice(2);
   const admission = mode === "admission-preflight" || mode === "admission-upgrade" || mode === "admission-verify";
   const scoring = mode === "scoring-preflight" || mode === "scoring-apply" || mode === "scoring-verify";
+  const registration = mode === "fixture-register";
   const host = isHostMode(mode);
   const requiresFixture = host && needsHostApproval(mode);
   const migration = host || admission || scoring || mode === "migrate" || mode === "migration-preflight";
-  if ((!migration && !["start","verify-setup"].includes(mode)) || !manifest || !credentials || extra.length !== (requiresFixture ? 2 : 0) ||
+  if ((!migration && !registration && !["start","verify-setup"].includes(mode)) || !manifest || !credentials || extra.length !== (requiresFixture ? 2 : registration ? 1 : 0) ||
       !isAbsolute(manifest) || !isAbsolute(credentials) || realpathSync(manifest)===realpathSync(credentials))
     throw new Error("Invalid pilot inputs.");
   rejectInherited(process.env);
   // Next automatically reads these files. A pilot checkout must never inherit another deployment's configuration.
   if ([".env",".env.local",".env.production",".env.production.local"].some(p=>existsSync(p))) throw new Error("Conflicting Next environment file.");
   const pins=readPins(JSON.parse(readFileSync(manifest,"utf8")));
-  if (migration) requireApprovedPins(pins);
+  if (migration || registration) requireApprovedPins(pins);
+  const registrationFixture = registration ? await import("./pilot-registration-fixture") : undefined;
+  registrationFixture?.requireFixtureConfiguration(extra[0]);
   let fixture;
   if (requiresFixture) {
     const [id, file] = extra;
@@ -43,7 +46,7 @@ async function main() {
       throw new PilotMigrationRefusal("Setup credentials must contain one assignment per connection.");
   }
   const values=parse(input);
-  const prepare=mode!=="start";
+  const prepare=mode!=="start" && !registration;
   const allowed=prepare?["DATABASE_URL","DATABASE_URL_UNPOOLED"]:["DATABASE_URL","SESSION_SECRET","HMAC_SECRET"];
   if(Object.keys(values).some(k=>!allowed.includes(k)) || allowed.some(k=>!values[k])) throw new Error("Invalid credential file.");
   const url=pilotUrl(values.DATABASE_URL,pins);
@@ -53,6 +56,14 @@ async function main() {
   try {
     await verifyPilot(pins,()=>probeIdentity(drizzle(neon(url))),()=>pooled(pool).transaction(tx=>probeIdentity(tx)),
       setup?()=>probeIdentity(pooled(setup)):undefined);
+    if (registrationFixture) {
+      const schema = await import("../lib/db/schema");
+      const fixture = await registrationFixture.startRegistrationFixture(pooled(pool,{schema}),pins,extra[0]);
+      console.log("Private one-use pilot registration link (expires in five minutes):",fixture.url);
+      if (!await fixture.done) throw new Error("Fixture registration did not complete.");
+      console.log("Pilot synthetic host registered.");
+      return;
+    }
     if (host && setup) {
       const result = await pilotHostAdmission(pooled(setup),pins,mode,fixture);
       console.log("Verified pilot admission.", result);

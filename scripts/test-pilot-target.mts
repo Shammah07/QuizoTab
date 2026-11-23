@@ -114,5 +114,29 @@ try {
   assert.match(run.stdout, /Synthetic HTTP identity probe/);
   assert.match(run.stderr, /Pilot refused/);
   assert.doesNotMatch(run.stdout+run.stderr, /fixture-only|Ready in|Local:/);
+
+  // Exercise the registration CLI with synthetic credentials and offline transports.
+  const approved = {...pins, projectId:"noisy-violet-99522280", branchId:"br-restless-king-bdli89ow",
+    endpointId:"ep-long-fog-bdc5rxjn",directHost:"ep-long-fog-bdc5rxjn.c-8.us-east-2.aws.neon.tech",
+    runtimeRole:"quizotab_pilot_app",setupRole:"quizotab_pilot_setup"};
+  writeFileSync(manifest,JSON.stringify(approved));
+  const fixtureUrl=url().replace(pins.runtimeRole,approved.runtimeRole).replace("ep-fixture-pooler.test.neon.tech",
+    approved.directHost.replace(".","-pooler."));
+  const email="room-host-d5b@pilot.invalid";
+  for (const [configured, databaseUrl, nodeEnv, expectsProbe] of [
+    [email,url(),"development",false], // original / other target
+    ["other@pilot.invalid",fixtureUrl,"development",false],
+    [email,fixtureUrl,"production",false],
+    [email,fixtureUrl,"development",true], // approved address, wrong server identity
+  ] as const) {
+    writeFileSync(credentials,["DATABASE_URL="+databaseUrl,"SESSION_SECRET=fixture","HMAC_SECRET=fixture"].join("\n"));
+    const child=spawnSync(process.execPath,["--conditions=react-server","--require",mock,"--import",
+      pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href,resolve("scripts/pilot.mts"),
+      "fixture-register",manifest,credentials,configured],{env:{...env,NODE_ENV:nodeEnv,VERCEL:"",VERCEL_ENV:""},
+      encoding:"utf8",timeout:30000,windowsHide:true});
+    assert.equal(child.status,1);
+    assert.equal(child.stdout.includes("Synthetic HTTP identity probe"),expectsProbe);
+    assert.doesNotMatch(child.stdout+child.stderr,/one-use pilot registration link|fixture-only/);
+  }
 } finally { rmSync(dir, {recursive:true, force:true}); }
 console.log("ok  separate-project manifest, identity SQL, three adapters, same-name project isolation and refused startup");

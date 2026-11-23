@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { readPins } from "../lib/db/pilot-target";
 import { preparePilotSchema } from "./pilot-migration";
 import { pilotHostAdmission, readHostApproval } from "./pilot-host-admission";
+import { testPilotRegistration } from "./test-pilot-registration";
 import { pilotScorePermissions } from "./pilot-score-permissions";
 import { pilotAdmission } from "./pilot-upgrade";
 import type { Session } from "../lib/auth/session";
@@ -76,6 +77,7 @@ try {
   await assert.rejects(pilotHostAdmission(db,pins,"host-verify"),/Complete scoring permissions/);
   await pilotScorePermissions(db,pins,"scoring-apply");
   await local.exec("insert into public.users(name,email,password,role) values ('A','a@local.invalid','x','host'),('B','b@local.invalid','x','host'),('J','j@local.invalid','x','judge')");
+  await testPilotRegistration(local,pins);
   await runtime();
   await assert.rejects(pilotHostAdmission(db,pins,"host-close"),/identity mismatch/);
   assert.equal((await create("room_v1")).status,401);

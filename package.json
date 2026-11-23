@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "pilot:fixture:register": "tsx --conditions=react-server scripts/pilot.mts fixture-register",
     "start:pilot": "tsx scripts/pilot.mts start",
     "pilot:verify:setup": "tsx scripts/pilot.mts verify-setup",
     "pilot:migrate": "tsx scripts/pilot.mts migrate",
