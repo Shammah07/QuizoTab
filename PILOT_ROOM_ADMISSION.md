@@ -44,9 +44,43 @@ The catalog fingerprints cover the canonical PostgreSQL definitions, including t
 
 ## Closure and recovery
 
+### Controlled pilot-host commands
+
+Stage 6E-D5A prepares these commands for separate operator authorization. Run them from the isolated pilot checkout with the external pins and setup credential file. The CLI verifies the target and roles, and the direct setup transaction rechecks identity, the installed upgrade and catalog fingerprint, the journal, both triggers, ownership and the complete scoring privilege profile. The earlier scoring verifier expects a closed policy. The host verifier can inspect either policy state.
+
+| npm script | Additional arguments after the pins and credentials | Result |
+|---|---|---|
+| `pilot:host:v1:preflight` | Host ID and absolute approval-file path | Read-only. Requires a matching persisted fixture, closed policy and empty allowlist. |
+| `pilot:host:v1:add` | Same ID and approval file | Adds just that host and leaves admission closed. |
+| `pilot:host:v1:open` | Same ID and approval file | Rechecks the persisted fixture and opens only for the single already-listed host. |
+| `pilot:host:v1:verify` | None | Read-only. Reports the policy state and sole host ID, or null for an empty list. Compare the ID with the operator record. |
+| `pilot:host:v1:close` | None | Closes the policy and removes the sole allowlist entry atomically. Existing tournaments and score history are retained. |
+| `pilot:host:v1:verify-closed` | None | Read-only. Requires a closed policy and empty allowlist. |
+
+For example, the read-only candidate check has this invocation:
+
+```powershell
+npm run pilot:host:v1:preflight -- "C:\QuizoTabPilot\pins.json" "C:\QuizoTabPilot\setup.env" "<approved-host-id>" "<absolute-approval-file-path>"
+```
+
+Before any allowlisting, the operator must confirm the synthetic account and its purpose against the pilot fixture creation record. Keep the approval JSON outside Git under operator control. Supply exactly four fields:
+
+| Field | Required evidence |
+|---|---|
+| `purpose` | The operator explicitly attests to `synthetic-room-admission`. |
+| `hostId` | Positive integer matching the separate CLI argument and the persisted user ID. |
+| `email` | Exact synthetic fixture address under a reserved `.invalid` domain. |
+| `createdAtUtc` | Exact creation instant from the fixture record, formatted as UTC with six fractional digits, e.g. `2026-01-01T00:00:00.000000Z`. |
+
+The account must still have the host role. The add and open operations lock the matching account row and compare all identity fields. The operator's independent fixture record supplies provenance; an address suffix alone cannot establish who controls an account. Do not build the approval from an incoming application request or automatically select a retained account. Explicit approval is required for each future live action.
+
+Administration writes serialize with the pilot procedure lock and lock both admission tables through commit. If a room creation already passed the guard, closure waits for it to finish. If closure obtains its locks first, the waiting creation sees the closed policy and fails. A lock timeout or failed check aborts the administration transaction.
+
+After a lost response or interrupted connection, use `pilot:host:v1:verify` in a fresh process before deciding what to do. Closed with no host, closed with the approved ID, and open with the approved ID distinguish the three valid stages. Compare the observed state with the intended operation and any other authorized activity. An unexpected ID, schema or privilege failure needs investigation. After a close, also run `pilot:host:v1:verify-closed`. Closure leaves the full scoring privilege profile in place and permits historical reads. Retire the approval file when the rehearsal ends.
+
 The setup-owned singleton controls new admission. Each allowed owner has a separate setup-owned host row. A room insert locks the enabled policy, the matching allowlist row and persisted host row for the transaction. A concurrent closure or revocation either waits for that creation to finish or prevents it from passing. Legacy inserts do not acquire policy locks. The application checks the signed-in host and the pinned runtime session before insertion. Engine changes and transfers of an existing room tournament are rejected by the database.
 
-If a future authorized rehearsal needs to stop admitting tournaments, the setup operator closes the singleton in a transaction, confirms it is closed and runs the read-only verifier on a new connection. Existing tournaments, score entries and append-only events remain readable under their ordinary access rules. Closing admission does not revoke a later scoring grant or stop operations on admitted tournaments. Handle any such grants separately. Reinstalling the old unconditional constraint after admitting a room tournament would conflict with retained records.
+To stop admitting tournaments during an authorized rehearsal, use the guarded close and verify closure on a new connection. Existing tournaments, score entries and append-only events remain readable under their ordinary access rules. Closing admission does not revoke a later scoring grant or stop operations on admitted tournaments. Handle any such grants separately. Reinstalling the old unconditional constraint after admitting a room tournament would conflict with retained records.
 
 A failure before commit rolls back the entire upgrade. If the connection fails during commit, resolve the outcome with the independent read-only verifier and preflight before considering another write. A partial or unknown schema requires investigation. The upgrade refuses to resume or overwrite it.
 

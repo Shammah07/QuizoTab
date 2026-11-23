@@ -5,6 +5,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { readPins } from "../lib/db/pilot-target";
 import { preparePilotSchema } from "./pilot-migration";
+import { pilotHostAdmission, readHostApproval } from "./pilot-host-admission";
+import { pilotScorePermissions } from "./pilot-score-permissions";
 import { pilotAdmission } from "./pilot-upgrade";
 import type { Session } from "../lib/auth/session";
 
@@ -71,8 +73,11 @@ try {
   const page = require("../app/host/[id]/judge/page").default;
   const create = (engine?:unknown) => createRoute.POST(new Request("http://localhost",{method:"POST",
     body:JSON.stringify({name:"Local rehearsal",category:"Quiz",year:2026,scoringEngineVersion:engine,ownerId:1})}));
+  await assert.rejects(pilotHostAdmission(db,pins,"host-verify"),/Complete scoring permissions/);
+  await pilotScorePermissions(db,pins,"scoring-apply");
   await local.exec("insert into public.users(name,email,password,role) values ('A','a@local.invalid','x','host'),('B','b@local.invalid','x','host'),('J','j@local.invalid','x','judge')");
   await runtime();
+  await assert.rejects(pilotHostAdmission(db,pins,"host-close"),/identity mismatch/);
   assert.equal((await create("room_v1")).status,401);
   session={name:"J",role:"judge",userId:3};
   assert.equal((await create("room_v1")).status,403);
@@ -88,12 +93,41 @@ try {
   assert.equal((await create("room_v1")).status,403);
   const directInsert = "insert into public.tournaments(owner_id,name,year,scoring_engine_version) values (1,'Direct local',2026,'room_v1')";
   await assert.rejects(local.exec(directInsert),/admission denied/i);
-  for(const statement of ["update pilot_admission.policy set enabled=true","select * from pilot_admission.hosts",
+  for(const statement of ["update pilot_admission.policy set enabled=true","select * from pilot_admission.hosts","insert into pilot_admission.hosts values (1)",
     "select * from drizzle.__drizzle_migrations","update tournaments set scoring_engine_version='room_v1'"]) {
     await assert.rejects(local.exec(statement),/permission denied/);
   }
   await setup();
-  await local.exec("insert into pilot_admission.hosts values (1); update pilot_admission.policy set enabled=true");
+  const [{stamp}] = (await local.query<{stamp:string}>(
+    "select to_char(created_at at time zone 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') as stamp from public.users where id=1")).rows;
+  const fixture = readHostApproval("1",{purpose:"synthetic-room-admission",hostId:1,email:"a@local.invalid",createdAtUtc:stamp});
+  assert.throws(()=>readHostApproval("2",fixture),/explicit ID/);
+  assert.throws(()=>readHostApproval("1",{...fixture,email:"a@example.com"}),/fixture record/);
+  assert.throws(()=>readHostApproval("1",{...fixture,purpose:"other"}),/fixture record/);
+  await assert.rejects(pilotHostAdmission(db,pins,"host-add"),/fixture approval/);
+  await local.exec("set neon.branch_id='br-other'");
+  await assert.rejects(pilotHostAdmission(db,pins,"host-add",fixture),/identity mismatch/);
+  await local.exec(`set neon.branch_id='${pins.branchId}'`);
+  await assert.rejects(pilotHostAdmission(db,pins,"host-open",fixture),/allowlisted host/);
+  for(const wrong of [{hostId:999},{hostId:3,email:"j@local.invalid"},{email:"other@local.invalid"},{createdAtUtc:"2000-01-01T00:00:00.000000Z"}])
+    await assert.rejects(pilotHostAdmission(db,pins,"host-add",{...fixture,...wrong}),/Persisted host/);
+  await pilotHostAdmission(db,pins,"host-preflight",fixture);
+  const interrupted = new Error("simulated local interruption");
+  await assert.rejects(db.transaction(async tx=>{
+    await pilotHostAdmission(tx,pins,"host-add",fixture);
+    throw interrupted;
+  }),error=>error===interrupted);
+  assert.deepEqual(await pilotHostAdmission(db,pins,"host-verify-closed"),{open:false,hostId:null});
+  await pilotHostAdmission(db,pins,"host-add",fixture);
+  assert.deepEqual(await pilotHostAdmission(db,pins,"host-verify"),{open:false,hostId:1});
+  await assert.rejects(pilotHostAdmission(db,pins,"host-add",{...fixture,hostId:2}),/allowlisted host/);
+  await runtime();
+  await assert.rejects(local.exec(directInsert),/admission denied/i);
+  await setup();
+  await assert.rejects(pilotHostAdmission(db,pins,"host-open",{...fixture,email:"other@local.invalid"}),/Persisted host/);
+  await pilotHostAdmission(db,pins,"host-open",fixture);
+  assert.deepEqual(await pilotHostAdmission(db,pins,"host-verify"),{open:true,hostId:1});
+  await assert.rejects(pilotHostAdmission(db,pins,"host-verify-closed"),/Expected closed/);
   await runtime();
   session={name:"B",role:"host",userId:2};
   assert.equal((await create("room_v1")).status,403);
@@ -130,8 +164,8 @@ try {
     select $1,'room','context',id,'round','q',1,3,gen_random_uuid() from team returning id)
     insert into tournament_score_events(score_entry_id,actor_user_id,event_type) select id,3,'submitted' from entry`,[roomId]);
   const audit = await local.query("select * from tournament_score_events order by id");
-  await local.exec("update pilot_admission.policy set enabled=false");
-  await verify();
+  await pilotHostAdmission(db,pins,"host-close");
+  assert.deepEqual(await pilotHostAdmission(db,pins,"host-verify-closed"),{open:false,hostId:null});
   await assert.rejects(local.exec("delete from tournament_score_events"),/append-only/);
   await runtime();
   await assert.rejects(local.exec(directInsert),/admission denied/i);

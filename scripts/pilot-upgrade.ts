@@ -26,9 +26,9 @@ function approvedAdmissionSQL() {
   return script;
 }
 
-export async function inspectScoringPermissions(db: Database) {
+export async function inspectScoringPermissions(db: Database, policyState: "closed" | "either" = "closed") {
   approvedAdmissionSQL();
-  const profile = await inspect(db, true, "classify");
+  const profile = await inspect(db, true, "classify", policyState);
   // Effective rights alone cannot distinguish a direct runtime grant from PUBLIC.
   const publicAccess = await db.execute(sql`select 1 from pg_class c
     cross join lateral aclexplode(c.relacl) acl
@@ -41,7 +41,7 @@ export async function inspectScoringPermissions(db: Database) {
   return profile;
 }
 
-async function inspect(db: Database, upgraded: boolean, permissionCheck: "legacy" | "classify" = "legacy") {
+async function inspect(db: Database, upgraded: boolean, permissionCheck: "legacy" | "classify" = "legacy", policyState: "closed" | "either" = "closed") {
   const rows = async (q: string) => (await db.execute(sql.raw(q))).rows;
   const catalog = await rows(read("scripts/pilot-catalog.sql"));
   // Generated from unmodified canonical files, and again after the reviewed closed upgrade.
@@ -102,7 +102,8 @@ async function inspect(db: Database, upgraded: boolean, permissionCheck: "legacy
     where relnamespace='pilot_admission'::regnamespace and attacl is not null`);
   check(!unexpected.length,"admission ownership or privileges");
   const policy = await rows("select singleton,enabled from pilot_admission.policy");
-  check(policy.length===1 && policy[0].singleton===true && policy[0].enabled===false,"closed policy");
+  check(policy.length===1 && policy[0].singleton===true && typeof policy[0].enabled==="boolean" &&
+    (policyState==="either" || policy[0].enabled===false),"closed policy");
   const records = await rows("select version,sha256 from pilot_admission.upgrades");
   check(records.length===1 && records[0].version===version && records[0].sha256===hash,"upgrade history");
   return profile;

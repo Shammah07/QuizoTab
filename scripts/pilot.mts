@@ -9,6 +9,7 @@ import { drizzle as pooled } from "drizzle-orm/neon-serverless";
 import { pilotUrl, probeIdentity, readPins, rejectInherited, verifyPilot } from "../lib/db/pilot-target";
 import { PilotMigrationRefusal, preparePilotSchema, requireApprovedPins } from "./pilot-migration";
 
+import { isHostMode, needsHostApproval, pilotHostAdmission, readHostApproval } from "./pilot-host-admission";
 import { pilotScorePermissions } from "./pilot-score-permissions";
 import { pilotAdmission } from "./pilot-upgrade";
 
@@ -16,8 +17,10 @@ async function main() {
   const [mode, manifest, credentials, ...extra]=process.argv.slice(2);
   const admission = mode === "admission-preflight" || mode === "admission-upgrade" || mode === "admission-verify";
   const scoring = mode === "scoring-preflight" || mode === "scoring-apply" || mode === "scoring-verify";
-  const migration = admission || scoring || mode === "migrate" || mode === "migration-preflight";
-  if ((!migration && !["start","verify-setup"].includes(mode)) || !manifest || !credentials || extra.length ||
+  const host = isHostMode(mode);
+  const requiresFixture = host && needsHostApproval(mode);
+  const migration = host || admission || scoring || mode === "migrate" || mode === "migration-preflight";
+  if ((!migration && !["start","verify-setup"].includes(mode)) || !manifest || !credentials || extra.length !== (requiresFixture ? 2 : 0) ||
       !isAbsolute(manifest) || !isAbsolute(credentials) || realpathSync(manifest)===realpathSync(credentials))
     throw new Error("Invalid pilot inputs.");
   rejectInherited(process.env);
@@ -25,6 +28,13 @@ async function main() {
   if ([".env",".env.local",".env.production",".env.production.local"].some(p=>existsSync(p))) throw new Error("Conflicting Next environment file.");
   const pins=readPins(JSON.parse(readFileSync(manifest,"utf8")));
   if (migration) requireApprovedPins(pins);
+  let fixture;
+  if (requiresFixture) {
+    const [id, file] = extra;
+    if (!isAbsolute(file) || [manifest,credentials].some(path=>realpathSync(path)===realpathSync(file)))
+      throw new Error("Invalid fixture approval file.");
+    fixture = readHostApproval(id,JSON.parse(readFileSync(file,"utf8")));
+  }
   const input = readFileSync(credentials, "utf8");
   if (migration) {
     const keys = input.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith("#"))
@@ -43,6 +53,11 @@ async function main() {
   try {
     await verifyPilot(pins,()=>probeIdentity(drizzle(neon(url))),()=>pooled(pool).transaction(tx=>probeIdentity(tx)),
       setup?()=>probeIdentity(pooled(setup)):undefined);
+    if (host && setup) {
+      const result = await pilotHostAdmission(pooled(setup),pins,mode,fixture);
+      console.log("Verified pilot admission.", result);
+      return;
+    }
     if (scoring && setup) {
       const result = await pilotScorePermissions(pooled(setup), pins, mode);
       console.log("Verified " + result.profile + " permission profile (missing=0 excess=0).", result.counts);
