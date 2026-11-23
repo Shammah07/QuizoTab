@@ -9,9 +9,12 @@ import { drizzle as pooled } from "drizzle-orm/neon-serverless";
 import { pilotUrl, probeIdentity, readPins, rejectInherited, verifyPilot } from "../lib/db/pilot-target";
 import { PilotMigrationRefusal, preparePilotSchema, requireApprovedPins } from "./pilot-migration";
 
+import { pilotAdmission } from "./pilot-upgrade";
+
 async function main() {
   const [mode, manifest, credentials, ...extra]=process.argv.slice(2);
-  const migration = mode === "migrate" || mode === "migration-preflight";
+  const admission = mode === "admission-preflight" || mode === "admission-upgrade" || mode === "admission-verify";
+  const migration = admission || mode === "migrate" || mode === "migration-preflight";
   if ((!migration && !["start","verify-setup"].includes(mode)) || !manifest || !credentials || extra.length ||
       !isAbsolute(manifest) || !isAbsolute(credentials) || realpathSync(manifest)===realpathSync(credentials))
     throw new Error("Invalid pilot inputs.");
@@ -38,6 +41,11 @@ async function main() {
   try {
     await verifyPilot(pins,()=>probeIdentity(drizzle(neon(url))),()=>pooled(pool).transaction(tx=>probeIdentity(tx)),
       setup?()=>probeIdentity(pooled(setup)):undefined);
+    if (admission && setup) {
+      await pilotAdmission(pooled(setup), pins, mode);
+      console.log("Verified pilot " + mode + " completed.");
+      return;
+    }
     if (migration && setup) {
       await preparePilotSchema(pooled(setup), pins, "drizzle", mode === "migrate");
       console.log(mode === "migrate" ? "Pilot schema installed and journal verified." : "Pilot identity, empty schema, privileges and migration files verified.");

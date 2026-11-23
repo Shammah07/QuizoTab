@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+export { requireApprovedPins } from "../lib/db/pilot-target";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -15,13 +15,6 @@ const approved = [
   { tag: "0000_panoramic_red_hulk", when: 1795023943629, hash: "a6d553f2abece110df79e303e04888a9fd0573dcbeebe874d578c5857a848e36" },
   { tag: "0001_dormant_room_scoring", when: 1795258859019, hash: "c9629c36b54ba47d01a40405c7ea33a10d0ecdc52fbf917bce31c99a6fed7efb" },
 ];
-
-export function requireApprovedPins(p: PilotPins) {
-  const fields = [p.projectId, p.branchId, p.endpointId, p.directHost, p.database, p.runtimeRole, p.setupRole];
-  const digest = createHash("sha256").update(JSON.stringify(fields)).digest("hex");
-  if (digest !== "6197f894dfeb1acc69e95ac39779ea692c85460ed5eeff05fe5487268ee70ddf")
-    throw new PilotMigrationRefusal("Manifest differs from the independently verified pilot.");
-}
 
 export function loadApproved(folder: string) {
   const expected = approved.map(({ tag, when }, idx) => ({ idx, version: "7", when, tag, breakpoints: true }));

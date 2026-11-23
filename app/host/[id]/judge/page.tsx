@@ -5,7 +5,7 @@ import { JudgeDashboard } from "@/components/host/judge-dashboard";
 import { ButtonLink } from "@/components/ui/button";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
-import { isJudgeFor, judgeView, looksLikeId, tournamentById } from "@/lib/tournament/store";
+import { isLegacyJudgeTournament, isJudgeFor, judgeView, looksLikeId, tournamentById } from "@/lib/tournament/store";
 
 export const metadata: Metadata = { title: "Judge portal" };
 
@@ -18,6 +18,7 @@ export default async function JudgePage({ params }: PageProps<"/host/[id]/judge"
 
   const tournament = await tournamentById(db(), id);
   if (!tournament) notFound();
+  if (!await isLegacyJudgeTournament(db(), id)) redirect("/staff");
   const isHost = tournament.ownerId === session.userId;
   const links = [
     { href: `/host/t/${id}`, label: "Audience page" },

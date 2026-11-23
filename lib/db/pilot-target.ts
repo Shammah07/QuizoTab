@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 import type { Db } from "./index";
@@ -24,6 +25,21 @@ export function readPins(raw: unknown): PilotPins {
         pins.setupRole !== "quizotab_pilot_owner") return pins;
   }
   throw new Error("Invalid independent pilot target pins.");
+}
+
+export function requireApprovedPins(p: PilotPins) {
+  const fields = [p.projectId, p.branchId, p.endpointId, p.directHost, p.database, p.runtimeRole, p.setupRole];
+  const digest = createHash("sha256").update(JSON.stringify(fields)).digest("hex");
+  if (digest !== "6197f894dfeb1acc69e95ac39779ea692c85460ed5eeff05fe5487268ee70ddf")
+    throw new Error("Manifest differs from the independently verified pilot.");
+}
+
+export async function requirePilotSession(db: Pick<Db, "execute">, pins: PilotPins, role: string) {
+  requireApprovedPins(pins);
+  const id = await probeIdentity(db);
+  if (id?.project_id !== pins.projectId || id.branch_id !== pins.branchId || id.endpoint_id !== pins.endpointId ||
+      id.database !== pins.database || id.login_role !== role || id.effective_role !== role)
+    throw new Error("Pilot session identity mismatch.");
 }
 
 export function rejectInherited(env:Record<string,string|undefined>) {

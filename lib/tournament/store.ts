@@ -9,6 +9,7 @@ import { z } from "zod";
 import { ApiError } from "@/lib/api";
 import { hashPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth/password";
 import { guestCodeKey, makeGuestCode } from "@/lib/auth/tokens";
+import { readPins, requirePilotSession } from "@/lib/db/pilot-target";
 import type { Db } from "@/lib/db";
 import { guestCodes, quizGames, teams, tournamentJudges, tournamentRoomStaff, tournamentScoreEntries, tournamentScoreEvents, tournaments, tournamentState, users } from "@/lib/db/schema";
 import {
@@ -115,7 +116,8 @@ export type TournamentInput = {
 // Payments are skipped for now: every format is free and the tournament is made straight away
 // (on the PHP site, payments.php created it once Pesapal confirmed the payment)
 export async function createTournament(db: Db, ownerId: number, input: TournamentInput): Promise<Result<TournamentRow>> {
-  if (input.scoringEngineVersion !== undefined && input.scoringEngineVersion !== "legacy") {
+  const engine = input.scoringEngineVersion === undefined ? "legacy" : input.scoringEngineVersion;
+  if (engine !== "legacy" && engine !== "room_v1") {
     return fail(409, "Only legacy tournament scoring is enabled.");
   }
   const parsed = detailsSchema.safeParse(input);
@@ -132,13 +134,25 @@ export async function createTournament(db: Db, ownerId: number, input: Tournamen
   const config: TournamentConfig = { ...base, name: d.name, startDate: d.startDate, endDate: d.endDate, setupDone: true };
 
   return db.transaction(async tx=>{
+    if (engine === "room_v1") {
+      try {
+        const pins = readPins(JSON.parse(process.env.QUIZOTAB_PILOT_PINS ?? ""));
+        await requirePilotSession(tx, pins, pins.runtimeRole);
+      } catch { return fail(409, "Only legacy tournament scoring is enabled."); }
+      const guard = await tx.execute(sql`select exists(select from pg_catalog.pg_trigger t
+        join pg_catalog.pg_proc p on p.oid=t.tgfoid join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+        where tgrelid='public.tournaments'::regclass and tgname='pilot_engine_guard_v1'
+          and tgenabled='A' and tgtype=21 and tgqual is null and tgattr=''::int2vector and not tgisinternal
+          and p.prosecdef and pg_get_userbyid(p.proowner)='quizotab_pilot_setup' and n.nspname='pilot_admission' and p.proname='guard_engine') as ready`);
+      if (guard.rows[0]?.ready !== true) return fail(409, "Pilot admission is unavailable.");
+    }
     const [account]=await tx.select({role:users.role}).from(users).where(eq(users.id,ownerId)).for("share");
     if(account?.role!=="host") return fail(403,"A host account is required to create a tournament.");
     const [created] = await tx
       .insert(tournaments)
-      .values({ ownerId, name: d.name, category: d.category, year: d.year, startDate: d.startDate || null, endDate: d.endDate || null, status: "active", scoringEngineVersion: "legacy" })
+      .values({ ownerId, name: d.name, category: d.category, year: d.year, startDate: d.startDate || null, endDate: d.endDate || null, status: "active", scoringEngineVersion: engine })
       .returning({ ...row, engine: tournaments.scoringEngineVersion });
-    if (created.engine !== "legacy") throw new ApiError(409, "Only legacy tournament creation is enabled.");
+    if (created.engine !== engine) throw new ApiError(409, "Tournament scoring engine did not match the request.");
     await tx.insert(tournamentState).values([
       { tournamentId: created.id, key: "config", value: config },
       { tournamentId: created.id, key: "scores", value: [] },
@@ -148,6 +162,9 @@ export async function createTournament(db: Db, ownerId: number, input: Tournamen
       { tournamentId: created.id, key: "sharing", value: normalizeSharing({}) },
     ]);
     return { ok: true as const, value: toRow(created) };
+  }).catch(error => {
+    if (error?.cause?.code === "QT403") return fail(403, "Room tournament admission denied.");
+    throw error;
   });
 }
 
@@ -543,11 +560,15 @@ export async function hostView(db: Db, tournament: TournamentRow) {
 }
 
 // What a judge sees: the rules, teams, scores and the draw, never the sharing settings or guest code
+export async function isLegacyJudgeTournament(db: Db, id: string) {
+  const [row] = await db.select({ engine: tournaments.scoringEngineVersion }).from(tournaments).where(eq(tournaments.id, id));
+  return row?.engine === "legacy";
+}
+
 export async function judgeView(db: Db, tournament: TournamentRow) {
+  if (!await isLegacyJudgeTournament(db, tournament.id)) throw new ApiError(409, "Use your assigned workspace at /staff.");
   const [state, teamList] = await Promise.all([readState(db, tournament.id), loadTeams(db, tournament.id)]);
-  const [row]=await db.select({engine:tournaments.scoringEngineVersion}).from(tournaments).where(eq(tournaments.id,tournament.id));
-  const roomScoring=row.engine==="room_v1";
-  return { tournament, config:state.config, teams:teamList, scores:roomScoring?[]:state.scores, pairings:state.pairings,roomScoring };
+  return { tournament, config:state.config, teams:teamList, scores:state.scores, pairings:state.pairings,roomScoring:false };
 }
 
 export type HostView = Awaited<ReturnType<typeof hostView>>;

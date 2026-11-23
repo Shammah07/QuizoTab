@@ -1,7 +1,7 @@
 import "server-only";
 import { ApiError, requireUser } from "@/lib/api";
 import type { Db } from "@/lib/db";
-import { isJudgeFor, ownTournament, tournamentById } from "./store";
+import { isLegacyJudgeTournament, isJudgeFor, ownTournament, tournamentById } from "./store";
 
 // Lookups the tournament API routes share
 
@@ -20,6 +20,7 @@ export async function judgedTournament(db: Db, id: unknown) {
   const user = await requireUser("Log in with your judge account first.");
   const tournament = await tournamentById(db, id);
   if (!tournament) throw new ApiError(404, "Tournament not found.");
+  if (!await isLegacyJudgeTournament(db, tournament.id)) throw new ApiError(409, "Use your assigned workspace at /staff.");
   const isHost = tournament.ownerId === user.userId;
   if (!isHost && !(await isJudgeFor(db, tournament.id, user.userId))) {
     throw new ApiError(403, "You aren't a judge for this tournament. Open the judge link the host sent you.");
