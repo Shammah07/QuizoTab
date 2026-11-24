@@ -2,6 +2,7 @@
 import { createRoot } from "react-dom/client";
 import { RoomWorkspace } from "@/components/host/room-workspace";
 import { scoreRequest } from "@/components/host/staff-requests";
+import { api } from "@/components/quiz/api";
 import type { StaffWorkspace } from "@/lib/tournament/staff-workspace";
 
 async function test() {
@@ -23,6 +24,8 @@ async function test() {
   const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status});
   window.fetch = async (url,options)=>{
     const path = String(url);
+    if (path==="/incomplete") return new Response("{", {status:200});
+    expect(options?.signal instanceof AbortSignal,"Room request lacks a deadline signal");
     if (revoked) return json({error:"No active assignment for this room and role."},403);
     if (path.endsWith("/scores") && options?.method==="POST") {
       posts++;
@@ -42,6 +45,8 @@ async function test() {
       role:path.includes("room_host")?"room_host":"judge",contexts:[context],history,coverage:[],standings:[]});
   };
   const mount=(base:string,role:"judge"|"room_host")=>root.render(<RoomWorkspace key={base+role} base={base} role={role} userId={1}/>);
+  const incomplete = await api("/incomplete");
+  expect(!incomplete.ok && incomplete.status===0,"Unreadable receipt reported success");
   if(!sessionStorage.getItem("mock-server")) {
     mount("/new","judge");
     await until(()=>!!button("Submit for review"),"Judge form did not load");
@@ -49,6 +54,7 @@ async function test() {
     input.value="2";
     button("Submit for review").click();button("Submit for review").click();
     await until(()=>has("Awaiting review"),"Lost response did not reconcile");
+    await until(()=>has("check score history"),"Lost-response recovery guidance missing");
     expect(posts===1,"Double click sent a second submission");
     location.reload();
     return;

@@ -1,5 +1,6 @@
 import { verifyOperations } from "./operations-checks";
-import { verifyAdjudication, verifyTiebreakRetirement } from "./adjudication-checks";
+import { setupBracket, verifyAdjudication, verifyIndependentRaces, verifyTiebreakRetirement } from "./adjudication-checks";
+import { changeRoom, listRoomSetup } from "@/lib/tournament/room-management";
 import { verifyLifecycle } from "./lifecycle-checks";
 import { checkSpectators, checkSpectatorRefresh } from "./spectator-checks";
 import { spectatorView } from "@/lib/tournament/spectator";
@@ -10,6 +11,7 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { NextRequest } from "next/server";
+import { route } from "@/lib/api";
 import * as schema from "@/lib/db/schema";
 import { scoreSubmissionHandler } from "@/lib/tournament/room-handlers";
 import { FORMAT_KEYS } from "@/lib/tournament/rules";
@@ -21,10 +23,51 @@ import { verifyConcurrentReview, verifyRoomReview } from "./score-review-checks"
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
 try {
+  const checkOrigin = route(async () => ({ ok: true }));
+  const origin = process.env.APP_URL ? new URL(process.env.APP_URL).origin : "https://quizotab.test";
+  const mutation = (headers: Record<string,string>) => new NextRequest(origin, {
+    method: "POST", headers: { host: new URL(origin).host, ...headers },
+  });
+  assert.equal((await checkOrigin(mutation({ origin }), {})).status, 200);
+  assert.equal((await checkOrigin(mutation({ origin: "https://other.invalid", "x-forwarded-host": "other.invalid" }), {})).status, 403);
+  assert.equal((await checkOrigin(mutation({ "sec-fetch-site": "cross-site" }), {})).status, 403);
+  const logged: unknown[][] = [];
+  const logger = console.error;
+  try {
+    console.error = (...values: unknown[]) => { logged.push(values); };
+    const failure = await route(async () => { throw new Error("private test parameter"); })(mutation({ origin }), {});
+    const payload = await failure.json();
+    assert.equal(failure.status, 500);
+    assert.ok(typeof payload.reference === "string" && JSON.stringify(logged).includes(payload.reference));
+    assert.ok(!JSON.stringify([logged,payload]).includes("private test parameter"));
+  } finally { console.error = logger; }
   await checkSpectatorRefresh();
   await migrate(db, { migrationsFolder: "./drizzle" });
   await verifyAdjudication(db);
   await verifyTiebreakRetirement(db);
+  await verifyIndependentRaces(db, db, await setupBracket(db));
+  const shared = await scoringFixture(db, "championship");
+  const conflicting = await Promise.allSettled([shared.submit(), shared.submit({...shared.data, points:1})]);
+  assert.equal(conflicting.filter(r=>r.status==="fulfilled").length,1);
+  assert.ok(conflicting.some(r=>r.status==="rejected" && r.reason.status===409));
+  const west = {...shared.pairing,id:randomUUID(),roomId:"west",teamAId:shared.teams[2].id};
+  await writeState(db,shared.id,"pairings",[shared.pairing,west]);
+  await db.update(schema.tournamentRoomStaff).set({roomId:"west"}).where(and(
+    eq(schema.tournamentRoomStaff.tournamentId,shared.id),eq(schema.tournamentRoomStaff.userId,shared.judges[1].userId)));
+  const pair = await Promise.all([shared.submit({...shared.data,questionKey:"q-b",clientRequestId:randomUUID()}),
+    shared.submit({...shared.data,contextId:west.id,teamId:west.teamAId,clientRequestId:randomUUID()},shared.judges[1],"west")]);
+  assert.ok(pair.every(receipt=>receipt.created));
+  const [owner] = await db.select({userId:schema.tournaments.ownerId}).from(schema.tournaments).where(eq(schema.tournaments.id,shared.id));
+  const admin = {...owner,name:"Owner",role:"host" as const};
+  const setup = await listRoomSetup(shared.adapter,shared.id,admin);
+  const command = {action:"revoke",roomId:"hall",assignmentId:setup.assignments.find(a=>a.roomId==="hall")!.id};
+  const attempt = {...shared.data,questionKey:"q-c",clientRequestId:randomUUID()};
+  const [revocation,submission] = await Promise.allSettled([changeRoom(shared.adapter,shared.id,admin,{command,revision:setup.revision}),shared.submit(attempt)]);
+  assert.equal(revocation.status,"fulfilled");
+  if (submission.status==="rejected") assert.equal(submission.reason.status,403);
+  await assert.rejects(shared.submit(attempt),{status:403});
+  const entries = await db.select().from(schema.tournamentScoreEntries).where(eq(schema.tournamentScoreEntries.tournamentId,shared.id));
+  assert.equal(entries.length,3+Number(submission.status==="fulfilled"));
   for (const format of FORMAT_KEYS) {
     await verifyOperations(db,format);
     await verifyLifecycle(db,format);

@@ -68,6 +68,32 @@ for (const fault of ["none", "begin", "callback", "rollback", "commit", "commit-
     assert.equal(clients, removed ? 2 : 1);
     assert.equal(releases, 2);
     assert.equal(pool.idleCount, 1);
+    if (fault === "none") {
+      const held = await pool.connect();
+      // The real WebSocket keeps Node alive. The injected wire client has no socket.
+      const keepAlive = setInterval(() => {}, 2000);
+      try {
+        const waiting = db.transaction(async () => { throw new Error("Unexpected acquired client"); });
+        assert.equal(pool.waitingCount, 1);
+        await assert.rejects(waiting, /timeout/i);
+        assert.equal(pool.waitingCount, 0);
+      } finally { clearInterval(keepAlive); held.release(); }
+      assert.equal(await db.transaction(async () => 1), 1);
+      console.log("ok  saturated pool bounds checkout wait and recovers");
+      const idle = await pool.connect();
+      idle.release();
+      const log = console.error;
+      const notices: unknown[][] = [];
+      try {
+        console.error = (...values:unknown[]) => { notices.push(values); };
+        idle.emit("error", new Error("private wire detail"));
+      } finally { console.error = log; }
+      assert.equal(pool.totalCount, 0);
+      assert.equal(notices.length, 1);
+      assert.ok(!JSON.stringify(notices).includes("private wire detail"));
+      assert.equal(await db.transaction(async () => 2), 2);
+      console.log("ok  idle disconnect disposes the client and permits subsequent checkout");
+    }
     console.log("ok  pooled transaction cleanup and subsequent checkout:", fault);
   } finally {
     await pool.end();

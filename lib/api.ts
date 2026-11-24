@@ -20,11 +20,13 @@ const json = (status: number, data: unknown) => NextResponse.json(data, { status
 // A request that changes something must come from QuizoTab's own pages, not from a form on another website
 function fromOtherSite(request: NextRequest) {
   if (request.method === "GET" || request.method === "HEAD") return false;
+  if (request.headers.get("sec-fetch-site") === "cross-site") return true;
   const origin = request.headers.get("origin");
   if (!origin) return false;
-  const hosts = [request.headers.get("host"), request.headers.get("x-forwarded-host")];
   try {
-    return !hosts.includes(new URL(origin).host);
+    if (process.env.APP_URL) return origin !== new URL(process.env.APP_URL).origin;
+    const host = request.headers.get("host");
+    return !host || origin !== request.nextUrl.protocol + "//" + host;
   } catch {
     return true;
   }
@@ -39,9 +41,9 @@ export function route<Context>(handler: (request: NextRequest, context: Context)
       return result instanceof Response ? result : json(200, result);
     } catch (error) {
       if (error instanceof ApiError) return json(error.status, { error: error.message, ...error.extra });
-      // The details go to the server log, never to the visitor
-      console.error("QuizoTab API error:", error);
-      return json(500, { error: "QuizoTab is having trouble right now. Please try again in a few minutes." });
+      const reference = crypto.randomUUID();
+      console.error("Unexpected QuizoTab API failure", { reference, method: request.method });
+      return json(500, { error: "QuizoTab could not confirm the result. Check the current state.", reference });
     }
   };
 }

@@ -133,9 +133,13 @@ export async function verifyRoomReview(db: Db, f: Fixture) {
 
 export async function verifyConcurrentReview(db: Db, f: Fixture, host: Session, approvedId: string) {
   const original = await f.submit({ ...f.data, teamId: f.teams[1].id, questionKey: "q-b", clientRequestId: randomUUID() });
-  const correction = await proposeCorrection(f.adapter, f.id, "hall", f.judges[0], {
+  const propose = () => proposeCorrection(f.adapter, f.id, "hall", f.judges[0], {
     scoreId: approvedId, points: 1, reason: "Rechecked the recorded answer", clientRequestId: randomUUID(),
   });
+  const proposals = await Promise.allSettled([propose(),propose()]);
+  const winner = proposals.find(result=>result.status==="fulfilled");
+  assert.ok(winner && proposals.some(result=>result.status==="rejected" && result.reason.status===409));
+  const correction = winner.value;
   for (const scoreId of [original.scoreId, correction.scoreId]) {
     const calls = await Promise.allSettled([{ decision: "approve" }, { decision: "reject", reason: "Answer disputed" }].map(d =>
       decideRoomScore(f.adapter, f.id, "hall", host, { scoreId, ...d })));

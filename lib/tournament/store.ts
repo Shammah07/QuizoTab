@@ -494,9 +494,15 @@ export async function removeJudge(db: Db, tournamentId: string, judgeId: unknown
 
 // The owner's plain guest code, made on first use
 export async function guestCodeFor(db: Db, tournamentId: string) {
-  const [found] = await db.select({ code: guestCodes.code }).from(guestCodes).where(eq(guestCodes.tournamentId, tournamentId));
-  if (found) return found.code;
-  return newGuestCode(db, tournamentId);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const [found] = await db.select({ code: guestCodes.code }).from(guestCodes).where(eq(guestCodes.tournamentId, tournamentId));
+    if (found) return found.code;
+    const code = makeGuestCode();
+    const [saved] = await db.insert(guestCodes).values({ tournamentId, code, codeKey: guestCodeKey(code) })
+      .onConflictDoNothing().returning({ code: guestCodes.code });
+    if (saved) return saved.code;
+  }
+  throw new Error("Could not allocate a guest code.");
 }
 
 // A new code; the old one stops working at once

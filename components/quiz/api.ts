@@ -4,17 +4,21 @@
 export type ApiResult<T> = ({ ok: true } & T) | { ok: false; status: number; error: string };
 
 // Calls one of the routes under /api. Errors come back as { ok: false, error } so screens can show them.
-export async function api<T extends object = Record<string, unknown>>(path: string, options: { method?: string; body?: unknown } = {}): Promise<ApiResult<T>> {
+export async function api<T extends object = Record<string, unknown>>(path: string, options: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<ApiResult<T>> {
   try {
     const response = await fetch(path, {
       method: options.method ?? (options.body === undefined ? "GET" : "POST"),
       headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       cache: "no-store",
+      signal: options.signal,
     });
-    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const data = await response.json().catch(() => null);
+    if (response.ok && (data === null || typeof data !== "object")) {
+      return { ok: false, status: 0, error: "QuizoTab returned an unreadable response. Check the current state." };
+    }
     if (response.ok) return { ok: true, ...(data as T) };
-    return { ok: false, status: response.status, ...data, error: typeof data.error === "string" ? data.error : "Something went wrong. Try again." };
+    return { ok: false, status: response.status, ...data, error: typeof data?.error === "string" ? data.error : "Something went wrong. Try again." };
   } catch {
     return { ok: false, status: 0, error: "Could not reach QuizoTab. Check your connection." };
   }

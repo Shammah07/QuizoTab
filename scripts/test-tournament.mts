@@ -255,7 +255,9 @@ await check("judges: a login tied to the tournament, removed when it judges noth
 });
 
 await check("sharing: an unlisted link or current guest code permits shared views", async () => {
-  const code = await guestCodeFor(db, tournamentId);
+  await db.delete(schema.guestCodes).where(eq(schema.guestCodes.tournamentId, tournamentId));
+  const [code, concurrentCode] = await Promise.all([guestCodeFor(db, tournamentId), guestCodeFor(db, tournamentId)]);
+  assert.ok(code === concurrentCode, "Concurrent first reads must return the same guest code");
   assert.match(code, /^[A-HJ-NP-Z2-9]{6}$/);
   assert.equal(await guestCodeFor(db, tournamentId), code);
   assert.equal((await tournamentForGuestCode(db, code))?.tournament.id, tournamentId);

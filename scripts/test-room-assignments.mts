@@ -104,7 +104,10 @@ try {
   console.log("ok  competing replacements, stale requests and rollback after failed insert");
 
   const pairing = { id: "match", stage: "preliminary" as const, matchLabel: "Match 1", teamAId: null, teamBId: null, roomId: east, released: true };
-  await saveRoomPairings(db, id, [pairing], []);
+  const savePairing = () => db.transaction(tx => saveRoomPairings(tx, id, [pairing], []));
+  const duplicates = await Promise.allSettled([savePairing(), savePairing()]);
+  assert.equal(duplicates.filter(r => r.status === "fulfilled").length, 1);
+  assert.ok(duplicates.some(r => r.status === "rejected" && r.reason.status === 409));
   await assert.rejects(change({ action: "delete", roomId: east }), { status: 409 });
   const { pairings } = await readState(db, id);
   await saveRoomPairings(db, id, [{ ...pairing, released: false }], pairings);

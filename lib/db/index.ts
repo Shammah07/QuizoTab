@@ -35,7 +35,7 @@ export { schema };
 
 let transactionalClient: Db | undefined;
 export function transactionDb(): Db {
-  transactionalClient ??= pooledDatabase(new Pool({ connectionString: runtimeUrl() }));
+  transactionalClient ??= pooledDatabase(new Pool({ connectionString: runtimeUrl(), connectionTimeoutMillis: 10000 }));
   return transactionalClient;
 }
 

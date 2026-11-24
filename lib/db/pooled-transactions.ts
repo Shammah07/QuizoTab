@@ -4,6 +4,9 @@ import { drizzle } from "drizzle-orm/neon-serverless";
 import * as schema from "./schema";
 
 export function pooledDatabase(pool: Pool) {
+  // The driver removes an idle client before emitting an error on its pool.
+  // An unhandled EventEmitter error would also terminate the Node process.
+  pool.on("error", () => console.error("QuizoTab database pool lost an idle connection."));
   const db = drizzle(pool, { schema });
   db.transaction = async (work, config) => {
     const client = await pool.connect();

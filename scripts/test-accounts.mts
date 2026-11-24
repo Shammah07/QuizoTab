@@ -1,6 +1,10 @@
 // Checks the account rules (register, confirm, log in, reset) against a throwaway Postgres that runs
 // inside this script, with the real migrations applied. Run with: npm test
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { randomBytes } from "node:crypto";
+import { mock } from "node:test";
+import { createSession, getSession, destroySession } from "@/lib/auth/session";
 import { PGlite } from "@electric-sql/pglite";
 import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
@@ -24,6 +28,36 @@ async function check(name: string, run: () => Promise<void> | void) {
 async function leaveUnconfirmed(email: string) {
   await db.update(schema.users).set({ emailVerifiedAt: null }).where(eq(schema.users.email, email));
 }
+
+await check("staff session round trip, cookie settings and logout", async () => {
+  const headers = createRequire(import.meta.url)("next/headers");
+  const previous = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = randomBytes(32).toString("hex");
+  let value: string | undefined;
+  const jar = mock.method(headers, "cookies", async () => ({
+    set(name:string, token:string, flags:Record<string,unknown>) {
+      assert.equal(name,"qt_session");
+      assert.equal(flags.httpOnly,true);
+      assert.equal(flags.sameSite,"lax");
+      assert.equal(flags.secure,process.env.NODE_ENV==="production");
+      value = token;
+    },
+    get: () => value ? {value} : undefined,
+    delete: () => { value = undefined; },
+  }));
+  try {
+    const actor = {userId:1,name:"Local staff",role:"judge" as const};
+    assert.equal(await getSession(),null);
+    await createSession(actor);
+    assert.deepEqual(await getSession(),actor);
+    await destroySession();
+    assert.equal(await getSession(),null);
+  } finally {
+    jar.mock.restore();
+    if (previous === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = previous;
+  }
+});
 
 await check("register validates name, email and password", async () => {
   assert.deepEqual((await registerUser(db, { name: " ", email: "a@b.co", password: "longenough" }, anyEmail)).ok, false);

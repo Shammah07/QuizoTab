@@ -127,8 +127,8 @@ export async function verifyLifecycle(db: Db, format: Format) {
   assert.equal((await preview()).blocker,null);
   assert.deepEqual(await history(), []);
   assert.deepEqual(await versions(), start);
-  assert.equal((await life(false, host, start)).status, 200);
-  assert.equal((await life(false, host, start)).status, 200);
+  const concurrentClose = await Promise.all([life(false, host, start), life(false, host, start)]);
+  assert.deepEqual(concurrentClose.map(response => response.status), [200, 200]);
   assert.equal((await preview()).completed,true);
   assert.equal((await workspace()).contexts[0].completed,true);
   const closed = await versions();

@@ -219,5 +219,5 @@ export async function verifyIndependentRaces(writer:Db,other:Db,b:Bracket) {
   assert.ok(race.some(r=>r.status==="rejected" && r.reason.status===409));
   const persisted = (await readState(other,b.id)).pairings.some(p=>p.id===final.id);
   assert.equal(persisted,race[1].status==="fulfilled");
-  console.log("ok  independent Neon commits: neutral approval / draft both committed; impactful approval / advancement both 409; reopen / release",race.map(r=>r.status));
+  console.log("ok  neutral approval and draft committed; impactful approval and advancement refused; reopen / release",race.map(r=>r.status));
 }

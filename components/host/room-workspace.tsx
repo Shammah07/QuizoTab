@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "@/components/quiz/api";
+import { api as request } from "@/components/quiz/api";
 import type { StaffWorkspace } from "@/lib/tournament/staff-workspace";
 import type { pendingRoomScores } from "@/lib/tournament/score-review";
 import type { completionPreview } from "@/lib/tournament/fixture-lifecycle";
@@ -10,6 +10,10 @@ import { scoreRequest, StaffRequests } from "./staff-requests";
 type Queue = Awaited<ReturnType<typeof pendingRoomScores>>;
 type Preview = Awaited<ReturnType<typeof completionPreview>>;
 type View = {room:StaffWorkspace;queue:Queue;preview:Preview|null;contextId:string};
+
+function api<T extends object>(path: string, options: {body?: unknown} = {}) {
+  return request<T>(path, {...options, signal: AbortSignal.timeout(15000)});
+}
 
 export function RoomWorkspace({base,role,userId}:{base:string;role:"judge"|"room_host";userId:number}) {
   const [selection,select] = useState("");
@@ -66,18 +70,24 @@ export function RoomWorkspace({base,role,userId}:{base:string;role:"judge"|"room
   const send:StaffCommand = async(path,body,retryable=false)=>{
     if (!requests.begin()) return;
     setBusy(true);setMessage("");
+    let dispatched = false;
     try {
       const token = retryable ? await scoreRequest(sessionStorage,userId+"/"+base,path,body) : null;
+      dispatched = true;
       const result = await api(base+"/"+path,{body:token ? {...body,clientRequestId:token.requestId} : body});
       if (!mounted.current) return;
       if (!result.ok && (result.status===401 || result.status===403)) setView(null);
       if (result.ok && token) sessionStorage.removeItem(token.key);
-      const notice = result.ok ? "Saved. Server state refreshed." : result.status===0 || result.status>=500
-        ? "Confirmation unavailable. Check the refreshed state before retrying the same details." : result.error;
+      let notice = result.ok ? "Saved." : result.error;
+      if (!result.ok && (result.status===0 || result.status>=500)) {
+        notice = token ? "Confirmation unavailable. Refresh and check score history. If missing, retry the same details in this tab."
+          : "Confirmation unavailable. Refresh the queue and fixture status before taking another action.";
+      }
       await refresh();
       if (mounted.current) setMessage(notice);
     } catch {
-      if (mounted.current) setMessage("Could not prepare a reliable retry. Check that tab storage is available and try again.");
+      if (mounted.current) setMessage(dispatched ? "Refresh the room and check the recorded result before taking another action."
+        : "Nothing sent. Check that tab storage is available and try again.");
     } finally {requests.finish();if (mounted.current) setBusy(false);}
   };
   const c = view?.room.contexts.find(c=>c.id===view.contextId);
