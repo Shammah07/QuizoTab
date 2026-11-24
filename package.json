@@ -25,7 +25,7 @@
     "pilot:host:v1:verify-closed": "tsx scripts/pilot.mts host-verify-closed",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "tsx scripts/test-dev-database.mts && tsx scripts/test-pilot-target.mts && tsx scripts/test-pilot-migration.mts && tsx scripts/test-pilot-score-permissions.mts && tsx --conditions=react-server scripts/test-pilot-admission.mts && tsx --conditions=react-server scripts/test-accounts.mts && tsx --conditions=react-server scripts/test-quiz.mts && tsx --conditions=react-server scripts/test-tournament.mts && tsx --conditions=react-server scripts/test-room-scoring.mts && tsx --conditions=react-server scripts/test-room-assignments.mts && tsx --conditions=react-server scripts/test-score-submissions.mts",
+    "test": "tsx --conditions=react-server scripts/test-pooled-transactions.mts && tsx scripts/test-dev-database.mts && tsx scripts/test-pilot-target.mts && tsx scripts/test-pilot-migration.mts && tsx scripts/test-pilot-score-permissions.mts && tsx --conditions=react-server scripts/test-pilot-admission.mts && tsx --conditions=react-server scripts/test-accounts.mts && tsx --conditions=react-server scripts/test-quiz.mts && tsx --conditions=react-server scripts/test-tournament.mts && tsx --conditions=react-server scripts/test-room-scoring.mts && tsx --conditions=react-server scripts/test-room-assignments.mts && tsx --conditions=react-server scripts/test-score-submissions.mts",
     "db:generate": "drizzle-kit generate",
     "test:score-submissions:dev": "tsx --conditions=react-server scripts/test-score-submissions-neon.mts",
     "db:verify:dev": "node --import tsx scripts/verify-dev-database.mts",
