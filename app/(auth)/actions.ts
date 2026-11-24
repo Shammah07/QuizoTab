@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { checkLogin, newResetToken, newVerificationToken, normalizeEmail, registerUser, resetPassword } from "@/lib/auth/accounts";
 import { createSession, destroySession } from "@/lib/auth/session";
-import { db } from "@/lib/db";
+import { db,transactionDb } from "@/lib/db";
+import { stagingEnabled } from "@/lib/staging";
 import { getTranslator } from "@/lib/i18n";
 import { sendResetEmail, sendVerificationEmail } from "@/lib/mail";
 import { recordAttempt, tooManyAttempts, visitorIp } from "@/lib/rate-limit";
@@ -101,7 +102,8 @@ export async function forgotAction(_: FormState, form: FormData): Promise<FormSt
 
 export async function resetAction(_: FormState, form: FormData): Promise<FormState> {
   const { t } = await getTranslator();
-  const result = await resetPassword(db(), text(form, "token"), text(form, "password"), text(form, "confirm"));
+  const args = [text(form,"token"),text(form,"password"),text(form,"confirm")] as const;
+  const result = stagingEnabled() ? await transactionDb().transaction(tx=>resetPassword(tx,...args)) : await resetPassword(db(),...args);
 
   if (result.ok) redirect("/login?notice=password-changed");
   if (result.reason === "expired") redirect("/reset");

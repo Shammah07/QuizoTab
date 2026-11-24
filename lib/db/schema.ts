@@ -52,7 +52,7 @@ export type TournamentDetails = {
 // ---------- Accounts ----------
 
 export const userRole = pgEnum("user_role", ["host", "judge"]);
-export const tokenPurpose = pgEnum("token_purpose", ["verify", "reset"]);
+export const tokenPurpose = pgEnum("token_purpose", ["verify", "reset", "session"]);
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 

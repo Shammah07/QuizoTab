@@ -1,7 +1,7 @@
 // Optional PostgreSQL integration test. Pass a local PostgreSQL bin directory.
 // The test initializes its own disposable, password-protected loopback cluster.
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync,writeFileSync,readFileSync,rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -51,6 +51,10 @@ try {
     set session authorization quizotab_pilot_setup; set neon.project_id='${pins.projectId}';
     set neon.branch_id='${pins.branchId}'; set neon.endpoint_id='${pins.endpointId}'`);
   const db=drizzle(admin);
+  if(process.argv.includes("--staging")) {
+    const {testStagingProvision}=await import("./test-staging-provision.mjs");
+    await testStagingProvision({admin,app,connect,dir});
+  } else {
   await preparePilotSchema(db,pins,"drizzle",true);
   await admin.query(readFileSync("PILOT_PERMISSION_AUDIT.md","utf8").split("```sql")[1].split("```")[0]);
   await pilotAdmission(db,pins,"admission-preflight");
@@ -124,6 +128,34 @@ try {
       project:"local-recovery",branch:"br-local-recovery",endpoint:"ep-local-recovery"}),snapshot);
     console.log("ok  separate local restore target, catalog, migration journal, privileges, row hashes and awards",{
       entries:snapshot.tournament_score_entries.count, events:snapshot.tournament_score_events.count, recoveryMs:Math.round(performance.now()-start)});
+    if(process.argv.includes("--stage-sessions")) {
+      await recovered.query("set search_path=pg_catalog");
+      const catalog=readFileSync("scripts/pilot-catalog.sql","utf8");
+      const readCatalog=async()=>(await recovered.query(catalog)).rows.map(row=>row.item);
+      const digest=items=>createHash("sha256").update(JSON.stringify(items)).digest("hex");
+      const before=await readCatalog();
+      assert.equal(digest(before),"14699534914ebe61bdd9d0df77c9d0d6282979e2bf1fe2ca94cd4a3cacc16549");
+      for(const purpose of ["verify","reset"]) await recovered.query(
+        "insert into public.auth_tokens(user_id,purpose,token_hash,expires_at) values(1,$1,$2,now()+interval '1 hour')",
+        [purpose,randomBytes(32).toString("hex")]);
+      const legacyTokens=async()=>(await recovered.query("select * from public.auth_tokens order by id")).rows;
+      const priorTokens=await legacyTokens();
+      await recovered.query(readFileSync("staging-upgrades/0001_session_tokens.sql","utf8"));
+      assert.deepEqual(await legacyTokens(),priorTokens);
+      const after=await readCatalog();
+      const added=after.filter(item=>!before.includes(item));
+      assert.deepEqual(added.map(item=>JSON.parse(item)),[["enum","public","token_purpose","session",3]]);
+      assert.deepEqual(after.filter(item=>!added.includes(item)),before);
+      const runtime=await connect("qt_recovery");
+      await runtime.query("set session authorization quizotab_pilot_app");
+      const token=randomBytes(32).toString("hex");
+      await runtime.query("insert into auth_tokens(user_id,token_hash,purpose,expires_at) values(1,$1,'session',now()+interval '8 hours')",[token]);
+      assert.equal((await runtime.query("select token_hash,created_at,expires_at from auth_tokens where user_id=1 and purpose='session' and used_at is null order by created_at")).rowCount,1);
+      assert.equal((await runtime.query("update auth_tokens set used_at=now() where token_hash=$1 returning used_at",[token])).rowCount,1);
+      await assert.rejects(runtime.query("select * from drizzle.__drizzle_migrations"),{code:"42501"});
+      console.log("ok  staging-only catalog delta and restricted session privileges",digest(after));
+    }
+  }
   }
 } finally {
   for (const c of clients.reverse()) await c.end();

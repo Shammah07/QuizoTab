@@ -6,7 +6,7 @@ import {officialAwards} from "../lib/tournament/official-standings.ts";
 
 // Caller supplies independently obtained expected identity for this target.
 // The same read-only snapshot covers identity, privileges, catalog and all comparisons.
-export function restoreEvidence(db, expected) {
+export function restoreEvidence(db, expected, verifyProtection) {
   return db.transaction(async tx=>{
     await tx.execute(sql`set local timezone='UTC'`);
     await tx.execute(sql`set local statement_timeout='30s'`);
@@ -16,8 +16,11 @@ export function restoreEvidence(db, expected) {
     assert.deepEqual(identity,expected,"Restore evidence identity mismatch");
     // The catalog routines use fully qualified relations and expect this path.
     await tx.execute(sql`set local search_path=pg_catalog`);
-    assert.equal(await inspectScoringPermissions(tx),"full");
-    assert.equal((await tx.execute(sql`select 1 from pilot_admission.hosts`)).rows.length,0);
+    if(verifyProtection) await verifyProtection(tx);
+    else {
+      assert.equal(await inspectScoringPermissions(tx),"full");
+      assert.equal((await tx.execute(sql`select 1 from pilot_admission.hosts`)).rows.length,0);
+    }
     const evidence = {};
     for(const table of ["tournament_score_entries","tournament_score_events","tournaments","teams","tournament_room_staff","tournament_state"]) {
       const {rows} = await tx.execute(sql.raw("select to_jsonb(r)::text as record from public."+table+" r order by to_jsonb(r)::text collate \"C\""));

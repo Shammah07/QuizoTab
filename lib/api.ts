@@ -1,6 +1,7 @@
 import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession, type Session } from "@/lib/auth/session";
+import { stagingEnabled } from "@/lib/staging";
 
 // Shared plumbing for the JSON API under app/api: every route answers with JSON, errors look the same
 // everywhere ({ error: "..." } with a fitting status), and nothing is cached.
@@ -22,6 +23,7 @@ function fromOtherSite(request: NextRequest) {
   if (request.method === "GET" || request.method === "HEAD") return false;
   if (request.headers.get("sec-fetch-site") === "cross-site") return true;
   const origin = request.headers.get("origin");
+  if (stagingEnabled()) return !origin || origin !== process.env.APP_URL || request.headers.get("host") !== new URL(process.env.APP_URL!).host;
   if (!origin) return false;
   try {
     if (process.env.APP_URL) return origin !== new URL(process.env.APP_URL).origin;

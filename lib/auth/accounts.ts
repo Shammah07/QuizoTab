@@ -6,6 +6,7 @@ import type { Db } from "@/lib/db";
 import { authTokens, users } from "@/lib/db/schema";
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from "./password";
 import { hashToken, newToken } from "./tokens";
+import { stagingEnabled } from "@/lib/staging";
 
 // Accounts: register, log in, confirm email, reset password.
 // Moved over from auth_process.php, account.php, verify.php, forgot.php and reset.php.
@@ -81,7 +82,7 @@ export async function findTokenUser(db: Db, token: unknown, purpose: TokenPurpos
 }
 
 // Marks every open token of this kind as used, so older emailed links stop working too
-async function retireTokens(db: Db, userId: number, purpose: TokenPurpose) {
+async function retireTokens(db: Db, userId: number, purpose: TokenPurpose | "session") {
   await db
     .update(authTokens)
     .set({ usedAt: sql`now()` })
@@ -106,6 +107,7 @@ export async function registerUser(
   // Tests switch the DNS lookup off
   checkEmail: (email: string) => Promise<boolean> = emailLooksReal,
 ): Promise<RegisterResult> {
+  if (stagingEnabled()) return {ok:false,field:"email",error:"Staging accounts are provisioned by the rehearsal operator."};
   const name = input.name.trim();
   const email = normalizeEmail(input.email);
 
@@ -191,5 +193,6 @@ export async function resetPassword(db: Db, token: unknown, password: string, co
     .where(eq(users.id, user.id));
   await retireTokens(db, user.id, "reset");
   await retireTokens(db, user.id, "verify");
+  if (stagingEnabled()) await retireTokens(db,user.id,"session");
   return { ok: true };
 }

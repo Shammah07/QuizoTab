@@ -34,9 +34,15 @@ export function db(): Db {
 export { schema };
 
 let transactionalClient: Db | undefined;
+let pool: Pool | undefined;
 export function transactionDb(): Db {
-  transactionalClient ??= pooledDatabase(new Pool({ connectionString: runtimeUrl(), connectionTimeoutMillis: 10000 }));
+  pool ??= new Pool({ connectionString: runtimeUrl(), connectionTimeoutMillis: 10000 });
+  transactionalClient ??= pooledDatabase(pool);
   return transactionalClient;
+}
+
+export function poolSample() {
+  return {active:(pool?.totalCount ?? 0)-(pool?.idleCount ?? 0),waiting:pool?.waitingCount ?? 0,max:pool?.options.max ?? 10};
 }
 
 export async function verifyRuntimePilot() {

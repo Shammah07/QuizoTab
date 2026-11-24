@@ -1,6 +1,7 @@
 import "server-only";
 import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { headers } from "next/headers";
+import { isIP } from "node:net";
 import { rateLimits } from "@/lib/db/schema";
 import type { Db } from "@/lib/db";
 
@@ -24,6 +25,8 @@ export async function recordAttempt(db: Db, key: string) {
 
 // The visitor's address as Vercel reports it. Only used to count attempts.
 export async function visitorIp() {
-  const forwarded = (await headers()).get("x-forwarded-for") ?? "";
-  return forwarded.split(",")[0].trim().replace(/[^0-9a-f.:]/gi, "") || "unknown";
+  // Vercel owns this header at its managed edge. Other deployments share
+  // the fallback bucket until their trusted ingress is explicitly supported.
+  const address = process.env.VERCEL === "1" ? (await headers()).get("x-vercel-forwarded-for") : null;
+  return address && isIP(address) ? address : "unknown";
 }
