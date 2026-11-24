@@ -98,6 +98,33 @@ try {
   assert.equal((await app.query("select count(*) from tournaments")).rows[0].count,"1");
   assert.deepEqual(await pilotHostAdmission(independent,pins,"host-verify-closed"),{open:false,hostId:null});
   console.log("ok  creation first and closure first, concurrent backend locks, historical read");
+  if (process.argv.includes("--scoring")) {
+    const second = await connect("quizotab_pilot");
+    await second.query("set session authorization quizotab_pilot_app; set statement_timeout='10s'");
+    const { checkNativeScoring } = await import("./native-scoring-checks.mjs");
+    await checkNativeScoring({admin, app, second, observer, port, password});
+    if(process.argv.includes("--load")) {
+      const {nativeEventSmoke}=await import("./native-event-smoke.mjs");
+      await nativeEventSmoke({admin,bootstrap,port});
+    }
+    const {restoreEvidence} = await import("./restore-evidence.mjs");
+    const expected = {database:"quizotab_pilot",login:pins.setupRole,role:pins.setupRole,
+      project:pins.projectId,branch:pins.branchId,endpoint:pins.endpointId};
+    const snapshot = await restoreEvidence(independent,expected);
+    // Postgres requires an idle template. All sessions here belong to this new cluster.
+    for (const client of clients.splice(1)) await client.end();
+    const start = performance.now();
+    await bootstrap.query("create database qt_recovery template quizotab_pilot owner quizotab_pilot_owner");
+    const recovered = await connect("qt_recovery");
+    // CREATE DATABASE does not clone the database ACL. Reproduce its independent
+    // provisioning on this disposable target before validating effective privileges.
+    await recovered.query("revoke temporary on database qt_recovery from public; grant create on database qt_recovery to quizotab_pilot_setup");
+    await recovered.query("set session authorization quizotab_pilot_setup; set neon.project_id='local-recovery'; set neon.branch_id='br-local-recovery'; set neon.endpoint_id='ep-local-recovery'");
+    assert.deepEqual(await restoreEvidence(drizzle(recovered),{...expected,database:"qt_recovery",
+      project:"local-recovery",branch:"br-local-recovery",endpoint:"ep-local-recovery"}),snapshot);
+    console.log("ok  separate local restore target, catalog, migration journal, privileges, row hashes and awards",{
+      entries:snapshot.tournament_score_entries.count, events:snapshot.tournament_score_events.count, recoveryMs:Math.round(performance.now()-start)});
+  }
 } finally {
   for (const c of clients.reverse()) await c.end();
   if(started) run("pg_ctl",["-D",data,"-m","fast","-w","stop"]);
